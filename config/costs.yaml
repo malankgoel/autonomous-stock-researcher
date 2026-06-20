@@ -1,0 +1,22 @@
+# Transaction cost model parameters.
+# Consumed by src/backtest/costs.py. Conservative parametric stand-in until a
+# TAQ-informed slippage curve is available (see the taq_curve slot below).
+
+# Half-spread paid on entry and exit, in basis points of price.
+half_spread_bps: 5.0
+
+# Commission per share, USD. Also supports a per-notional floor.
+commission_per_share: 0.005
+commission_min_usd: 1.0
+
+# Slippage as a function of order size relative to average daily volume (ADV).
+# impact_bps = coef * (order_adv_fraction ** exponent) * 10000
+slippage:
+  model: square_root          # square_root | linear
+  coef: 0.1
+  exponent: 0.5
+  participation_cap: 0.05      # max fraction of ADV fillable in one session
+
+# Reserved slot for the empirical TAQ-informed curve. Leave null until TAQ data
+# arrives; costs.py must fall back to the parametric model above when null.
+taq_curve: null

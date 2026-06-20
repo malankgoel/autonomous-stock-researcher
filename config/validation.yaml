@@ -1,0 +1,45 @@
+# Validation protocol parameters. PRE-REGISTERED: commit before looking at real data.
+# Consumed by src/validation/*. See protocol/validation_protocol.md for the rationale.
+
+# Forward-return horizons to label, in trading days. The first element is primary.
+horizons_days: [1, 5, 20, 60]
+primary_horizon_days: 20
+
+# Success bar for a hypothesis to graduate.
+success_bar:
+  metric: sector_relative_return    # net of modeled costs
+  require_positive: true
+  require_significant: true
+  significance: deflated_sharpe      # deflated_sharpe | fdr
+  alpha: 0.05
+  must_beat_matched_baseline: true
+
+# Multiple-testing control across the exploration phase.
+multiple_testing:
+  method: deflated_sharpe            # also fdr (benjamini_hochberg) supported
+  fdr_alpha: 0.05
+
+# Binding DSR sampling choices. See protocol/validation_protocol.md for the formula.
+deflated_sharpe:
+  metric: sector_relative_return
+  returns: non_overlapping_primary_horizon_cohorts
+  cohort_aggregation: equal_weight_by_signal_date
+  risk_free_return: 0.0
+  moment_estimators: bias_corrected
+  kurtosis_convention: pearson       # Normal distribution = 3
+  min_observations: 3
+  trial_count: all_attempted
+  effective_trials: conservative_full_count
+
+# Walk-forward exploration windows.
+walkforward:
+  train_years: 4
+  test_years: 1
+  step_years: 1
+
+# Locked holdout. Touched exactly once, at the very end. No idea, parameter, or
+# feature may see these dates before the final evaluation.
+holdout:
+  start_date: "2020-01-01"
+  end_date: "2023-12-31"
+  uses_remaining: 1

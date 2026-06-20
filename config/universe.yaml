@@ -1,0 +1,17 @@
+# Universe construction parameters.
+# Consumed by src/universe/constructor.py. Point in time, any cap, liquidity floor only.
+
+# Liquidity / tradability floor. The only constraint on membership.
+min_dollar_volume: 1_000_000        # trailing median daily dollar volume, USD
+dollar_volume_lookback_days: 63     # ~3 months of trailing sessions for the median
+
+# No cap or sector constraint by design.
+cap: any
+sector: any
+
+# Date range for the exploration universe. Holdout dates live in validation.yaml.
+start_date: "2004-01-01"
+end_date: "2019-12-31"
+
+# Survivorship handling: include delisted names and their delisting returns.
+include_delisted: true
