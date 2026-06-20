@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data (never commit licensed WRDS/CRSP/Compustat/IBES data)
+data_cache/
+*.parquet
+*.csv
+!tests/**/*.csv
+
+# Holdout state (single-use; do not let it leak via the repo)
+*.holdout_state.json
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
