@@ -1,0 +1,14 @@
+{
+  "id": "weekend_reversal_v1",
+  "description": "Buy at Friday close, sell at Monday close, broad universe",
+  "source": "human",
+  "tier": 1,
+  "generation_batch": "manual_seed",
+  "universe_filter": {"min_dollar_volume": 1000000, "cap": "any"},
+  "entry_condition": {"weekday": "friday", "session": "close"},
+  "direction": "long",
+  "horizon_days": 1,
+  "entry_timing": "friday_close",
+  "exit_rule": {"exit_session": "monday_close"},
+  "features": ["weekday", "session", "close"]
+}
