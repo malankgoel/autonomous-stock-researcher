@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import date
 
 import numpy as np
 
@@ -25,9 +26,12 @@ def walk_forward(results_by_window: list[BacktestResult], config: dict) -> dict:
     batches = {result.generation_batch for result in results_by_window}
     if len(spec_ids) != 1 or len(batches) != 1:
         raise ValueError("all windows must belong to one spec and generation batch")
-    if any(result.start_date is None or result.end_date is None for result in results_by_window):
-        raise ValueError("every window must define start_date and end_date")
-    ordered = sorted(results_by_window, key=lambda result: result.start_date)  # type: ignore[arg-type]
+    for result in results_by_window:
+        if type(result.start_date) is not date or type(result.end_date) is not date:
+            raise ValueError("every window must define date-valued start_date and end_date")
+        if result.start_date > result.end_date:
+            raise ValueError("walk-forward window start_date must not be after end_date")
+    ordered = sorted(results_by_window, key=_window_start)
     for previous, current in zip(ordered, ordered[1:], strict=False):
         assert previous.end_date is not None and current.start_date is not None
         if current.start_date <= previous.end_date:
@@ -40,7 +44,9 @@ def walk_forward(results_by_window: list[BacktestResult], config: dict) -> dict:
         start_date=ordered[0].start_date,
         end_date=ordered[-1].end_date,
     )
-    horizon = int(config.get("primary_horizon_days", 20))
+    horizon = config.get("primary_horizon_days", 20)
+    if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 0:
+        raise ValueError("primary_horizon_days must be a positive int")
     returns = cohort_returns(combined, horizon)
     standard_deviation = float(np.std(returns, ddof=1)) if returns.size >= 2 else math.nan
     sharpe = (
@@ -61,3 +67,9 @@ def walk_forward(results_by_window: list[BacktestResult], config: dict) -> dict:
         "end_date": combined.end_date,
         "result": combined,
     }
+
+
+def _window_start(result: BacktestResult) -> date:
+    """Return a validated window start without suppressing type checks."""
+    assert type(result.start_date) is date
+    return result.start_date

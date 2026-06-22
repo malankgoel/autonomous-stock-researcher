@@ -111,6 +111,25 @@ def test_walk_forward_aggregates_only_non_holdout_nonoverlapping_windows():
         walk_forward([first, second], CONFIG)
 
 
+def test_walk_forward_rejects_invalid_window_dates():
+    result = _result("edge", [0.01])
+    assert result.end_date is not None
+    result.start_date = result.end_date + timedelta(days=1)
+    with pytest.raises(ValueError, match="start_date"):
+        walk_forward([result], CONFIG)
+
+    result.start_date = None
+    with pytest.raises(ValueError, match="date-valued"):
+        walk_forward([result], CONFIG)
+
+
+@pytest.mark.parametrize("horizon", [0, -1, True, 20.0, "20"])
+def test_walk_forward_requires_positive_integer_horizon(horizon):
+    result = _result("edge", [0.01])
+    with pytest.raises(ValueError, match="primary_horizon_days"):
+        walk_forward([result], {"primary_horizon_days": horizon})
+
+
 def test_holdout_use_is_persistent_across_manager_instances(tmp_path):
     state_path = tmp_path / "holdout-state.json"
     manager = HoldoutManager(CONFIG, str(state_path))
