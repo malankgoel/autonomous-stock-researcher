@@ -28,6 +28,29 @@ Division of labor:
   and statistical validation.
 - No LLM anywhere inside the numerical or backtest loop.
 
+## Development
+
+Python 3.11 or newer is required. Create an isolated environment and install the
+project with its development dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+Run the same checks enforced in continuous integration before committing:
+
+```bash
+ruff format --check .
+ruff check .
+pytest -q
+```
+
+The default test suite uses only synthetic data; it does not require WRDS
+credentials or licensed datasets. Raw vendor data and persistent holdout state
+are intentionally excluded from version control.
+
 ## Architecture
 
 ```text
@@ -282,6 +305,10 @@ with no change to the rest of the code.
    meaningful.
 
 ### When data arrives (this weekend)
+
+Use the [WRDS download checklist](docs/wrds_download_checklist.md) to acquire the
+registered Tier 1 inputs without omitting identifier, delisting, or availability
+fields. Then:
 
 1. Implement `wrds_provider.py` and `edgar.py` behind the same interface
    (CRSP, Compustat point in time, IBES, EDGAR).
