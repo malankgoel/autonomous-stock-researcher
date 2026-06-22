@@ -128,3 +128,27 @@ def test_friday_close_rejects_a_non_friday_signal() -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize("direction", ["neutral", "sideways", "LONG", ""])
+def test_execution_rejects_unsupported_directions(direction: str) -> None:
+    costs = {
+        "half_spread_bps": 0.0,
+        "commission_per_share": 0.0,
+        "commission_min_usd": 0.0,
+        "slippage": {"model": "linear", "coef": 0.0, "participation_cap": 0.05},
+    }
+    with pytest.raises(ValueError, match="direction"):
+        resolve_entry(
+            ticker="X",
+            signal_date=date(2024, 1, 5),
+            entry_timing="same_close",
+            sessions=[date(2024, 1, 5)],
+            entry_row={"close": 100.0, "adv": 1_000_000.0},
+            desired_shares=1_000,
+            cost_config=costs,
+            direction=direction,
+        )
+
+    with pytest.raises(ValueError, match="direction"):
+        resolve_exit(_fill(), _path(), {"horizon": 2}, 2, direction)

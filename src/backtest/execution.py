@@ -88,6 +88,7 @@ def resolve_exit(
     invalidation_dates: set[date] | None = None,
 ) -> ExitFill | None:
     """Resolve horizon/session/stop/target/invalidation exits from a future path."""
+    _validate_direction(direction)
     if price_path.empty:
         return None
     path = price_path.sort_values("date").reset_index(drop=True)
@@ -200,6 +201,11 @@ def _directional_extremes(
 
 def _signed_threshold(threshold: float, direction: str) -> float:
     return threshold if direction == "long" else -threshold
+
+
+def _validate_direction(direction: str) -> None:
+    if direction not in {"long", "short"}:
+        raise ValueError("direction must be 'long' or 'short'")
 
 
 def _finite_positive(value: object, name: str) -> float:

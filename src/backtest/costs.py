@@ -60,6 +60,8 @@ def entry_price_with_impact(
     direction: str,
 ) -> float:
     """Apply the entry-side spread and impact to the displayed market price."""
+    if direction not in {"long", "short"}:
+        raise ValueError("direction must be 'long' or 'short'")
     # This also validates participation and all scalar inputs.
     round_trip_cost(price, order_shares, adv_shares, config)
     participation = order_shares / adv_shares
