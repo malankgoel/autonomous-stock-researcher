@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from backtest.labels import BacktestResult, SignalResult
-from validation.holdout import HoldoutExhaustedError, HoldoutManager
+from validation.holdout import HoldoutExhaustedError, HoldoutManager, HoldoutStateError
 from validation.survival import benjamini_hochberg, cohort_returns, deflated_sharpe
 from validation.walkforward import walk_forward
 
@@ -133,3 +133,44 @@ def test_failed_holdout_evaluation_still_consumes_the_use(tmp_path):
         manager.evaluate_once(fail)
     with pytest.raises(HoldoutExhaustedError):
         manager.evaluate_once(lambda: None)
+
+
+def test_holdout_rejects_reversed_interval(tmp_path):
+    config = {
+        "holdout": {
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-01",
+            "uses_remaining": 1,
+        }
+    }
+    with pytest.raises(ValueError, match="start_date"):
+        HoldoutManager(config, tmp_path / "state.json")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not JSON",
+        "[]",
+        json.dumps(
+            {
+                "start_date": "2020-01-01",
+                "end_date": "2023-12-31",
+                "uses_remaining": 2,
+            }
+        ),
+        json.dumps(
+            {
+                "start_date": "2020-01-01",
+                "end_date": "2023-12-31",
+                "uses_remaining": False,
+            }
+        ),
+    ],
+)
+def test_holdout_rejects_malformed_persistent_state(tmp_path, payload):
+    state_path = tmp_path / "holdout-state.json"
+    state_path.write_text(payload)
+    manager = HoldoutManager(CONFIG, state_path)
+    with pytest.raises(HoldoutStateError):
+        _ = manager.uses_remaining
