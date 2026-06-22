@@ -138,3 +138,22 @@ def test_adv_uses_only_prior_session_volume():
     assert np.isnan(prices.loc[0, "adv"])
     assert prices.loc[1, "adv"] == prices.loc[0, "volume"]
     assert prices.loc[20, "adv"] == np.mean(prices.loc[0:19, "volume"])
+
+
+def test_short_panel_without_filing_dates_keeps_fundamental_schema():
+    provider = SyntheticDataProvider(
+        start=date(2024, 1, 2),
+        end=date(2024, 1, 5),
+        tickers=["ONE"],
+    )
+
+    fundamentals = provider.get_fundamentals(["ONE"], date(2024, 1, 5))
+
+    assert fundamentals.empty
+    assert fundamentals.index.name == "ticker"
+    assert list(fundamentals) == [
+        "filing_date",
+        "market_cap",
+        "book_to_market",
+        "sector",
+    ]

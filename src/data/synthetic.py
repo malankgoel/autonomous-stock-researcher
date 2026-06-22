@@ -47,6 +47,7 @@ _PRICE_COLUMNS = (
     "delisting_return",
 )
 _FUNDAMENTAL_COLUMNS = ("filing_date", "market_cap", "book_to_market", "sector")
+_FUNDAMENTAL_STORAGE_COLUMNS = ("ticker", *_FUNDAMENTAL_COLUMNS)
 _EFFECT_KEYS = frozenset(
     {
         "weekend_drift",
@@ -214,7 +215,9 @@ class SyntheticDataProvider(DataProvider):
                         "sector": sectors[ticker_number % len(sectors)],
                     }
                 )
-        return pd.DataFrame(rows).sort_values(["filing_date", "ticker"], ignore_index=True)
+        return pd.DataFrame(rows, columns=_FUNDAMENTAL_STORAGE_COLUMNS).sort_values(
+            ["filing_date", "ticker"], ignore_index=True
+        )
 
     def trading_days(self, start: date, end: date) -> list[date]:
         if start > end:
