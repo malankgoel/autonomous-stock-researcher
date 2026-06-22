@@ -50,14 +50,29 @@ class BacktestHarness:
             # Also accept config/costs.yaml loaded directly.
             self.cost_config = dict(self.config)
         validation = self.config.get("validation", self.config)
-        self.horizons = tuple(
-            int(value) for value in validation.get("horizons_days", [1, 5, 20, 60])
-        )
-        if not self.horizons or any(value <= 0 for value in self.horizons):
+        horizons = validation.get("horizons_days", [1, 5, 20, 60])
+        if (
+            not isinstance(horizons, (list, tuple))
+            or not horizons
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+                for value in horizons
+            )
+        ):
             raise ValueError("horizons_days must contain positive integers")
-        self.desired_shares = float(self.config.get("order_shares", 1_000.0))
-        if not math.isfinite(self.desired_shares) or self.desired_shares <= 0.0:
+        if len(set(horizons)) != len(horizons):
+            raise ValueError("horizons_days must not contain duplicates")
+        self.horizons = tuple(horizons)
+
+        desired_shares = self.config.get("order_shares", 1_000.0)
+        if (
+            isinstance(desired_shares, bool)
+            or not isinstance(desired_shares, (int, float))
+            or not math.isfinite(float(desired_shares))
+            or desired_shares <= 0.0
+        ):
             raise ValueError("order_shares must be a positive finite number")
+        self.desired_shares = float(desired_shares)
 
     def run(
         self,
