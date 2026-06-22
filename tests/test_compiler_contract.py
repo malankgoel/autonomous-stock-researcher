@@ -67,3 +67,13 @@ def test_same_close_cannot_condition_on_same_session_close():
 
     with pytest.raises(CompileError, match="same-session close"):
         compile_spec(spec, CatalogOnlyProvider(set(spec.features)))
+
+
+def test_compile_normalizes_structural_validation_errors():
+    spec = _fixture("pead_long_v1.json")
+    spec.source = "unknown"
+
+    with pytest.raises(CompileError, match="invalid hypothesis spec") as exc:
+        compile_spec(spec, CatalogOnlyProvider(set(spec.features)))
+
+    assert exc.value.__cause__ is not None

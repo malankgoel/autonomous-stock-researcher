@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from typing import Any, TypedDict
 
 from data.interface import DataProvider
-from hypothesis.spec import HypothesisSpec, validate
+from hypothesis.spec import HypothesisSpec, SpecValidationError, validate
 
 
 class CompileError(ValueError):
@@ -70,7 +70,10 @@ def compile_spec(spec: HypothesisSpec, provider: DataProvider) -> CompiledHypoth
     information cutoff as ``as_of``. At date resolution, a close/high/low/volume from
     the fill session cannot form a signal executed at that same close.
     """
-    validate(spec)  # structural gate (frozen contract)
+    try:
+        validate(spec)  # structural gate (frozen contract)
+    except SpecValidationError as exc:
+        raise CompileError(f"invalid hypothesis spec: {exc}") from exc
 
     available = provider.available_features()
     missing = sorted(set(spec.features) - available)
