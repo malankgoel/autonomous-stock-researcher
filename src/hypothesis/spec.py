@@ -12,7 +12,9 @@ the compiler, and the harness can all import it without pulling in numpy/pandas.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+import math
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 
 
@@ -86,12 +88,14 @@ class HypothesisSpec:
         return json.dumps(self.to_dict(), **kwargs)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "HypothesisSpec":
-        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+    def from_dict(cls, data: Mapping) -> "HypothesisSpec":
+        if not isinstance(data, Mapping):
+            raise SpecValidationError(["hypothesis payload must be an object"])
+        known = {item.name for item in fields(cls)}
         unknown = set(data) - known
         if unknown:
             raise SpecValidationError([f"unknown field(s): {sorted(unknown)}"])
-        return cls(**data)
+        return cls(**dict(data))
 
     @classmethod
     def from_json(cls, text: str) -> "HypothesisSpec":
@@ -115,6 +119,11 @@ def _validate_entry_condition(cond: dict) -> list[str]:
                         f"entry_condition[{feat!r}] uses illegal operator {op!r}; "
                         f"allowed: {sorted(ALLOWED_OPERATORS)}"
                     )
+            for op, operand in pred.items():
+                if isinstance(operand, (dict, list, tuple, set)):
+                    errors.append(f"entry_condition[{feat!r}][{op!r}] must be a scalar")
+                elif isinstance(operand, float) and not math.isfinite(operand):
+                    errors.append(f"entry_condition[{feat!r}][{op!r}] must be finite")
     return errors
 
 
@@ -129,12 +138,27 @@ def _validate_exit_rule(rule: dict) -> list[str]:
         h = rule["horizon"]
         if not isinstance(h, int) or isinstance(h, bool) or h <= 0:
             errors.append("exit_rule['horizon'] must be a positive int")
-    for k in ("stop", "target"):
-        if rule.get(k) is not None and not isinstance(rule[k], (int, float)):
-            errors.append(f"exit_rule[{k!r}] must be a number or null")
-    if rule.get("stop") is not None and rule["stop"] >= 0:
+    for key in ("stop", "target"):
+        value = rule.get(key)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            errors.append(f"exit_rule[{key!r}] must be a finite number or null")
+    if _is_finite_number(rule.get("stop")) and rule["stop"] >= 0:
         errors.append("exit_rule['stop'] should be a negative return threshold")
+    if _is_finite_number(rule.get("target")) and rule["target"] <= 0:
+        errors.append("exit_rule['target'] should be a positive return threshold")
     return errors
+
+
+def _is_finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+    )
 
 
 def validate(spec: HypothesisSpec) -> None:
@@ -183,6 +207,16 @@ def validate(spec: HypothesisSpec) -> None:
 
     errors.extend(_validate_entry_condition(spec.entry_condition))
     errors.extend(_validate_exit_rule(spec.exit_rule))
+
+    if (
+        isinstance(spec.exit_rule, dict)
+        and isinstance(spec.horizon_days, int)
+        and not isinstance(spec.horizon_days, bool)
+        and isinstance(spec.exit_rule.get("horizon"), int)
+        and not isinstance(spec.exit_rule["horizon"], bool)
+        and spec.exit_rule["horizon"] != spec.horizon_days
+    ):
+        errors.append("exit_rule['horizon'] must match horizon_days")
 
     # Cross-field: every field referenced by the entry condition must be declared
     # in features, so the compiler can guarantee point in time resolvability.

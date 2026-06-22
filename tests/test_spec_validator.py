@@ -55,6 +55,11 @@ def test_round_trip_serialization(pead):
     assert again.direction is Direction.LONG
 
 
+def test_non_object_payload_is_rejected_cleanly():
+    with pytest.raises(SpecValidationError, match="must be an object"):
+        HypothesisSpec.from_json("[]")
+
+
 # -- structural rejections --------------------------------------------------
 
 
@@ -111,6 +116,42 @@ def test_illegal_operator_rejected(pead):
 def test_positive_stop_rejected(pead):
     bad = copy.deepcopy(pead)
     bad["exit_rule"] = {"horizon": 20, "stop": 0.12}
+    spec = HypothesisSpec.from_dict(bad)
+    with pytest.raises(SpecValidationError):
+        validate(spec)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("stop", float("nan")),
+        ("stop", float("-inf")),
+        ("target", 0.0),
+        ("target", -0.1),
+        ("target", float("inf")),
+        ("target", True),
+    ],
+)
+def test_invalid_exit_threshold_rejected(pead, field, value):
+    bad = copy.deepcopy(pead)
+    bad["exit_rule"][field] = value
+    spec = HypothesisSpec.from_dict(bad)
+    with pytest.raises(SpecValidationError):
+        validate(spec)
+
+
+def test_exit_horizon_must_match_primary_horizon(pead):
+    bad = copy.deepcopy(pead)
+    bad["exit_rule"]["horizon"] = bad["horizon_days"] + 1
+    spec = HypothesisSpec.from_dict(bad)
+    with pytest.raises(SpecValidationError, match="must match horizon_days"):
+        validate(spec)
+
+
+@pytest.mark.parametrize("operand", [[1, 2], {"nested": 1}, float("nan")])
+def test_entry_predicate_operand_must_be_finite_scalar(pead, operand):
+    bad = copy.deepcopy(pead)
+    bad["entry_condition"] = {"earnings_surprise_pct": {">": operand}}
     spec = HypothesisSpec.from_dict(bad)
     with pytest.raises(SpecValidationError):
         validate(spec)
