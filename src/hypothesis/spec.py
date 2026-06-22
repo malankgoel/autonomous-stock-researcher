@@ -24,9 +24,7 @@ class Direction(Enum):
 
 # Entry timings the compiler knows how to resolve point in time. The harness must
 # never resolve an entry using data dated at or after the fill timestamp.
-ALLOWED_ENTRY_TIMINGS: frozenset[str] = frozenset(
-    {"next_open", "friday_close", "same_close"}
-)
+ALLOWED_ENTRY_TIMINGS: frozenset[str] = frozenset({"next_open", "friday_close", "same_close"})
 
 # Comparison operators allowed inside an entry_condition predicate.
 ALLOWED_OPERATORS: frozenset[str] = frozenset({">", ">=", "<", "<=", "==", "!="})
@@ -50,21 +48,21 @@ class HypothesisSpec:
     See ``README.md`` -> "Hypothesis Spec Schema" for the canonical definition.
     """
 
-    id: str                       # unique, stable identifier
-    description: str              # human readable statement of the edge
-    source: str                   # "llm" or "human"
-    tier: int                     # 1 (structured) or 2 (uses text features)
-    generation_batch: str         # which generation run produced it (for test counting)
+    id: str  # unique, stable identifier
+    description: str  # human readable statement of the edge
+    source: str  # "llm" or "human"
+    tier: int  # 1 (structured) or 2 (uses text features)
+    generation_batch: str  # which generation run produced it (for test counting)
 
-    universe_filter: dict         # e.g. {"min_dollar_volume": 1_000_000, "cap": "any"}
+    universe_filter: dict  # e.g. {"min_dollar_volume": 1_000_000, "cap": "any"}
 
-    entry_condition: dict         # parseable predicate over point in time features
+    entry_condition: dict  # parseable predicate over point in time features
     direction: Direction
 
-    horizon_days: int             # primary holding horizon
-    entry_timing: str             # one of ALLOWED_ENTRY_TIMINGS
-    exit_rule: dict               # {"horizon": int, "stop": float|None,
-                                  #  "target": float|None, "invalidation": ...}
+    horizon_days: int  # primary holding horizon
+    entry_timing: str  # one of ALLOWED_ENTRY_TIMINGS
+    exit_rule: dict  # {"horizon": int, "stop": float|None,
+    #  "target": float|None, "invalidation": ...}
 
     features: list = field(default_factory=list)  # all must resolve point in time
 
@@ -165,14 +163,15 @@ def validate(spec: HypothesisSpec) -> None:
             f"direction must be one of {[d.value for d in Direction]}, got {spec.direction!r}"
         )
 
-    if not isinstance(spec.horizon_days, int) or isinstance(spec.horizon_days, bool) \
-            or spec.horizon_days <= 0:
+    if (
+        not isinstance(spec.horizon_days, int)
+        or isinstance(spec.horizon_days, bool)
+        or spec.horizon_days <= 0
+    ):
         errors.append("horizon_days must be a positive int")
 
     if spec.entry_timing not in ALLOWED_ENTRY_TIMINGS:
-        errors.append(
-            f"entry_timing {spec.entry_timing!r} not in {sorted(ALLOWED_ENTRY_TIMINGS)}"
-        )
+        errors.append(f"entry_timing {spec.entry_timing!r} not in {sorted(ALLOWED_ENTRY_TIMINGS)}")
 
     if not isinstance(spec.universe_filter, dict) or not spec.universe_filter:
         errors.append("universe_filter must be a non-empty dict")

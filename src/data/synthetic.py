@@ -80,9 +80,7 @@ class SyntheticDataProvider(DataProvider):
             raise ValueError(f"unknown injected effect parameter(s): {sorted(unknown)}")
         if {"weekend_drift", "friday_monday_drift"} <= set(self.injected_effect):
             raise ValueError("configure only one weekend drift parameter")
-        if {"post_surprise_daily_drift", "post_surprise_drift"} <= set(
-            self.injected_effect
-        ):
+        if {"post_surprise_daily_drift", "post_surprise_drift"} <= set(self.injected_effect):
             raise ValueError("configure only one post-surprise drift parameter")
 
         self._tickers = tuple(tickers or _DEFAULT_TICKERS)
@@ -172,11 +170,7 @@ class SyntheticDataProvider(DataProvider):
             # ADV used for an entry must be known before that session trades. Shift
             # first so today's realized volume never affects today's fill or cost.
             adv = (
-                pd.Series(volume, dtype=float)
-                .shift(1)
-                .rolling(20, min_periods=1)
-                .mean()
-                .to_numpy()
+                pd.Series(volume, dtype=float).shift(1).rolling(20, min_periods=1).mean().to_numpy()
             )
 
             frames.append(

@@ -13,9 +13,7 @@ from hypothesis.spec import Direction, HypothesisSpec
 
 class TinyProvider(DataProvider):
     def __init__(self, future_close: float) -> None:
-        self.days = [date(2023, 12, 29)] + [
-            date(2024, 1, day) for day in (2, 3, 4, 5, 8, 9)
-        ]
+        self.days = [date(2023, 12, 29)] + [date(2024, 1, day) for day in (2, 3, 4, 5, 8, 9)]
         closes = [98.0, 100.0, 101.0, 102.0, 103.0, future_close, 105.0]
         stock = pd.DataFrame(
             {
@@ -142,8 +140,12 @@ def test_same_close_universe_uses_only_prior_session_liquidity() -> None:
     def run(current_volume: float):
         provider = TinyProvider(104.0)
         stock = provider.prices["ticker"] == "ONE"
-        provider.prices.loc[stock & (provider.prices["date"] == date(2023, 12, 29)), "volume"] = 1_000.0
-        provider.prices.loc[stock & (provider.prices["date"] == date(2024, 1, 2)), "volume"] = current_volume
+        provider.prices.loc[stock & (provider.prices["date"] == date(2023, 12, 29)), "volume"] = (
+            1_000.0
+        )
+        provider.prices.loc[stock & (provider.prices["date"] == date(2024, 1, 2)), "volume"] = (
+            current_volume
+        )
         spec = HypothesisSpec(
             id="same-close-cutoff",
             description="Current close liquidity cannot select a same-close signal",
@@ -197,9 +199,9 @@ def test_early_target_controls_reported_strategy_return() -> None:
         "slippage": {"model": "linear", "coef": 0.0, "participation_cap": 0.05},
     }
 
-    result = BacktestHarness(
-        provider, {"costs": costs, "horizons_days": [1, 3]}
-    ).run(compile_spec(spec, provider), date(2024, 1, 2), date(2024, 1, 9))
+    result = BacktestHarness(provider, {"costs": costs, "horizons_days": [1, 3]}).run(
+        compile_spec(spec, provider), date(2024, 1, 2), date(2024, 1, 9)
+    )
 
     signal = result.signals[0]
     assert signal.exit_reason == "target"

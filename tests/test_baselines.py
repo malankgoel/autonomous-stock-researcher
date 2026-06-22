@@ -102,7 +102,10 @@ def _config(kind: str) -> dict:
 def _bucket(provider: SyntheticDataProvider, signal_date: date, ticker: str) -> int:
     sessions = provider.trading_days(signal_date - pd.Timedelta(days=60), signal_date)[-20:]
     prices = provider.get_prices(
-        list(TICKERS), sessions[0], sessions[-1], as_of=signal_date,
+        list(TICKERS),
+        sessions[0],
+        sessions[-1],
+        as_of=signal_date,
         fields=["date", "ticker", "close", "volume"],
     ).copy()
     prices["dv"] = prices["close"] * prices["volume"]
@@ -148,8 +151,7 @@ def test_benchmark_baselines_use_equivalent_cost_model(kind: str, ticker: str) -
     assert signal.ticker == ticker
     assert signal.cost_return == pytest.approx(expected)
     assert signal.forward_returns[5] == pytest.approx(
-        provider.get_prices([ticker], signal.entry_date, END, END).iloc[5]["close"]
-        / row["open"]
+        provider.get_prices([ticker], signal.entry_date, END, END).iloc[5]["close"] / row["open"]
         - 1.0
         - expected
     )
@@ -209,13 +211,21 @@ def test_rejects_incomplete_candidate_provenance() -> None:
 
     with pytest.raises(BaselineError, match="universe_size"):
         matched_baseline(
-            compiled, replace(candidate, universe_size=None), provider, START, END,
+            compiled,
+            replace(candidate, universe_size=None),
+            provider,
+            START,
+            END,
             _config("random"),
         )
 
     incomplete_signal = replace(candidate.signals[0], exit_date=None)
     with pytest.raises(BaselineError, match="exit provenance"):
         matched_baseline(
-            compiled, replace(candidate, signals=[incomplete_signal]), provider, START, END,
+            compiled,
+            replace(candidate, signals=[incomplete_signal]),
+            provider,
+            START,
+            END,
             _config("random"),
         )

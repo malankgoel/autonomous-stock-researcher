@@ -66,9 +66,8 @@ class UniverseConstructor:
             & prices["date"].isin(sessions)
             & (pd.to_datetime(prices["date"]).dt.date <= as_of)
         ].copy()
-        frame["dollar_volume"] = (
-            pd.to_numeric(frame["close"], errors="coerce")
-            * pd.to_numeric(frame["volume"], errors="coerce")
+        frame["dollar_volume"] = pd.to_numeric(frame["close"], errors="coerce") * pd.to_numeric(
+            frame["volume"], errors="coerce"
         )
         medians = frame.groupby("ticker", sort=False)["dollar_volume"].median()
         return set(medians[medians >= self.min_dollar_volume].index) & tradable

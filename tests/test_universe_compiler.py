@@ -92,9 +92,7 @@ def test_liquidity_is_trailing_median_and_every_read_is_point_in_time() -> None:
     as_of = date(2024, 1, 12)
     prices = _prices(as_of)
     liq_dates = sorted(prices.loc[prices["ticker"] == "LIQ", "date"].unique())
-    prices.loc[
-        (prices["ticker"] == "LIQ") & prices["date"].isin(liq_dates[-2:]), "volume"
-    ] = 1
+    prices.loc[(prices["ticker"] == "LIQ") & prices["date"].isin(liq_dates[-2:]), "volume"] = 1
     # A future high-volume row must never rescue THIN into the historical universe.
     prices.loc[len(prices)] = [as_of + timedelta(days=3), "THIN", 10.0, 10_000_000]
     provider = PointInTimeProvider(prices, {"LIQ", "THIN"}, set())
@@ -103,7 +101,9 @@ def test_liquidity_is_trailing_median_and_every_read_is_point_in_time() -> None:
     )
 
     assert constructor.universe(as_of) == {"LIQ"}
-    assert provider.price_calls and all(call_as_of == as_of for _, _, call_as_of in provider.price_calls)
+    assert provider.price_calls and all(
+        call_as_of == as_of for _, _, call_as_of in provider.price_calls
+    )
     assert all(end <= as_of for _, end, _ in provider.price_calls)
 
 

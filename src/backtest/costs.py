@@ -37,9 +37,7 @@ def round_trip_cost(
             f"order participation {participation:.6f} exceeds cap {cap:.6f}"
         )
 
-    half_spread_bps = _nonnegative_finite(
-        config.get("half_spread_bps", 0.0), "half_spread_bps"
-    )
+    half_spread_bps = _nonnegative_finite(config.get("half_spread_bps", 0.0), "half_spread_bps")
     impact_bps = _impact_bps(participation, config)
 
     commission_per_share = _nonnegative_finite(
@@ -51,9 +49,7 @@ def round_trip_cost(
     one_way_commission = max(commission_per_share * order_shares, commission_floor)
     notional = price * order_shares
 
-    return 2.0 * (half_spread_bps + impact_bps) / 10_000.0 + (
-        2.0 * one_way_commission / notional
-    )
+    return 2.0 * (half_spread_bps + impact_bps) / 10_000.0 + (2.0 * one_way_commission / notional)
 
 
 def entry_price_with_impact(

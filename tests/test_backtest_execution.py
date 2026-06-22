@@ -44,9 +44,7 @@ def test_simultaneous_stop_and_target_is_conservatively_a_stop() -> None:
 
 
 def test_explicit_session_and_invalidation_exits() -> None:
-    session_exit = resolve_exit(
-        _fill(), _path(), {"exit_session": "monday_close"}, 20, "long"
-    )
+    session_exit = resolve_exit(_fill(), _path(), {"exit_session": "monday_close"}, 20, "long")
     assert session_exit is not None
     assert session_exit.exit_date == date(2024, 1, 8)
     assert session_exit.reason == "horizon"
@@ -71,9 +69,7 @@ def test_horizon_and_target_exits() -> None:
     assert horizon.market_price == 102.0
     assert horizon.reason == "horizon"
 
-    target = resolve_exit(
-        _fill(), _path(), {"horizon": 2, "target": 0.05}, 2, "long"
-    )
+    target = resolve_exit(_fill(), _path(), {"horizon": 2, "target": 0.05}, 2, "long")
     assert target is not None
     assert target.exit_date == date(2024, 1, 8)
     assert target.market_price == pytest.approx(105.0)
@@ -88,9 +84,7 @@ def test_horizon_and_target_exits() -> None:
         ("next_open", date(2024, 1, 8), 101.0),
     ],
 )
-def test_supported_entry_timings(
-    timing: str, expected_date: date, expected_market: float
-) -> None:
+def test_supported_entry_timings(timing: str, expected_date: date, expected_market: float) -> None:
     sessions = [date(2024, 1, 5), date(2024, 1, 8)]
     row = {"open": 101.0, "close": 100.0, "adv": 1_000_000.0}
     costs = {
@@ -121,13 +115,16 @@ def test_friday_close_rejects_a_non_friday_signal() -> None:
         "commission_min_usd": 0.0,
         "slippage": {"model": "linear", "coef": 0.0, "participation_cap": 0.05},
     }
-    assert resolve_entry(
-        ticker="X",
-        signal_date=date(2024, 1, 8),
-        entry_timing="friday_close",
-        sessions=[date(2024, 1, 8)],
-        entry_row={"close": 100.0, "adv": 1_000_000.0},
-        desired_shares=1_000,
-        cost_config=costs,
-        direction="long",
-    ) is None
+    assert (
+        resolve_entry(
+            ticker="X",
+            signal_date=date(2024, 1, 8),
+            entry_timing="friday_close",
+            sessions=[date(2024, 1, 8)],
+            entry_row={"close": 100.0, "adv": 1_000_000.0},
+            desired_shares=1_000,
+            cost_config=costs,
+            direction="long",
+        )
+        is None
+    )

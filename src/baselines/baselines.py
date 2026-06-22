@@ -178,13 +178,15 @@ class _BaselineEngine:
         lookback = int(self.universe_config["dollar_volume_lookback_days"])
         history = _trailing_sessions(self.provider, liquidity_as_of, lookback)
         prices = self.provider.get_prices(
-            sorted(eligible), history[0], history[-1], as_of=liquidity_as_of,
+            sorted(eligible),
+            history[0],
+            history[-1],
+            as_of=liquidity_as_of,
             fields=["date", "ticker", "close", "volume"],
         )
         prices = prices.copy()
-        prices["liquidity"] = (
-            pd.to_numeric(prices["close"], errors="coerce")
-            * pd.to_numeric(prices["volume"], errors="coerce")
+        prices["liquidity"] = pd.to_numeric(prices["close"], errors="coerce") * pd.to_numeric(
+            prices["volume"], errors="coerce"
         )
         medians = prices.groupby("ticker")["liquidity"].median().dropna().to_dict()
         ordered = sorted(eligible, key=lambda ticker: (medians.get(ticker, math.inf), ticker))
@@ -227,7 +229,11 @@ class _BaselineEngine:
                 )
             if self.kind == "random":
                 index = _stable_index(
-                    self.seed, self.compiled["spec_id"], signal_date, bucket, position,
+                    self.seed,
+                    self.compiled["spec_id"],
+                    signal_date,
+                    bucket,
+                    position,
                     len(available),
                 )
                 ticker = sorted(available)[index]
@@ -262,7 +268,10 @@ class _BaselineEngine:
                 return {}
             formation_end = sessions[-22]
             prices = self.provider.get_prices(
-                sorted(eligible), sessions[0], formation_end, as_of=signal_date,
+                sorted(eligible),
+                sessions[0],
+                formation_end,
+                as_of=signal_date,
                 fields=["date", "ticker", "close"],
             )
             scores = {}
@@ -280,9 +289,7 @@ class _BaselineEngine:
             return scores
         raise AssertionError(f"unhandled baseline kind {self.kind}")
 
-    def _evaluate_signal(
-        self, ticker: str, candidate_signal: SignalResult
-    ) -> SignalResult | None:
+    def _evaluate_signal(self, ticker: str, candidate_signal: SignalResult) -> SignalResult | None:
         signal_date = candidate_signal.signal_date
         if self.compiled["entry_timing"] == "same_close":
             entry_date = signal_date
@@ -422,9 +429,7 @@ def _trailing_sessions(provider: DataProvider, as_of: date, count: int) -> list[
     return sessions[-count:]
 
 
-def _liquidity_cutoff(
-    provider: DataProvider, signal_date: date, entry_timing: str
-) -> date:
+def _liquidity_cutoff(provider: DataProvider, signal_date: date, entry_timing: str) -> date:
     if entry_timing == "next_open":
         return signal_date
     prior_sessions = provider.trading_days(
@@ -466,11 +471,7 @@ def _invalidation_dates(path: pd.DataFrame, rule: dict) -> set[date]:
         return set()
     if not isinstance(condition, dict):
         raise BaselineError("exit invalidation must be a predicate mapping or null")
-    return {
-        row["date"]
-        for _, row in path.iterrows()
-        if _matches(condition, row.to_dict())
-    }
+    return {row["date"] for _, row in path.iterrows() if _matches(condition, row.to_dict())}
 
 
 def _matches(condition: dict, row: dict[str, Any]) -> bool:
@@ -499,7 +500,11 @@ def _summaries(
     sharpes: dict[int, float] = {}
     for horizon in horizons:
         values = np.asarray(
-            [signal.forward_returns[horizon] for signal in signals if horizon in signal.forward_returns],
+            [
+                signal.forward_returns[horizon]
+                for signal in signals
+                if horizon in signal.forward_returns
+            ],
             dtype=float,
         )
         if values.size:

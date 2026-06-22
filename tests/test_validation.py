@@ -73,9 +73,7 @@ def test_cohorts_equal_weight_same_date_and_drop_overlap():
 def test_single_trial_dsr_matches_registered_equation():
     result = _result("edge", [0.01, 0.02, 0.03])
     # SR=2, corrected skew=0, corrected Pearson kurtosis=1.5, T=3, SR0=0.
-    assert deflated_sharpe(result, [result], CONFIG) == pytest.approx(
-        0.9895393323311029
-    )
+    assert deflated_sharpe(result, [result], CONFIG) == pytest.approx(0.9895393323311029)
 
 
 def test_dsr_counts_failed_trials_in_expected_maximum():

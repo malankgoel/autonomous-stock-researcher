@@ -35,6 +35,7 @@ def weekend() -> dict:
 
 # -- happy path: the README worked examples are valid -----------------------
 
+
 @pytest.mark.parametrize("name", ["pead_long_v1.json", "weekend_reversal_v1.json"])
 def test_readme_examples_are_valid(name):
     spec = HypothesisSpec.from_dict(_load(name))
@@ -55,6 +56,7 @@ def test_round_trip_serialization(pead):
 
 
 # -- structural rejections --------------------------------------------------
+
 
 def test_unknown_field_rejected(pead):
     bad = {**pead, "lookahead_hack": True}

@@ -24,10 +24,10 @@ class SignalResult:
 
     spec_id: str
     ticker: str
-    signal_date: date            # date the entry condition was satisfied
-    entry_date: date             # date the fill actually occurred (e.g. next_open)
-    entry_price: float           # realized fill price, net of modeled slippage
-    direction: str               # "long" | "short" | "neutral"
+    signal_date: date  # date the entry condition was satisfied
+    entry_date: date  # date the fill actually occurred (e.g. next_open)
+    entry_price: float  # realized fill price, net of modeled slippage
+    direction: str  # "long" | "short" | "neutral"
 
     # Multi-horizon forward returns, keyed by horizon in trading days, NET of costs.
     # e.g. {1: 0.004, 5: 0.011, 20: 0.025}
@@ -57,14 +57,14 @@ class BacktestResult:
     """
 
     spec_id: str
-    generation_batch: str        # carried through for honest test counting
+    generation_batch: str  # carried through for honest test counting
     signals: list[SignalResult] = field(default_factory=list)
 
     # Provenance so a result can be reproduced and audited.
     universe_size: int | None = None
     start_date: date | None = None
     end_date: date | None = None
-    is_holdout: bool = False     # True only for the single final holdout evaluation
+    is_holdout: bool = False  # True only for the single final holdout evaluation
 
     # Optional summary stats filled by the harness; validation may recompute.
     n_signals: int | None = None

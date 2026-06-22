@@ -139,7 +139,13 @@ def _validate_record(record: Any) -> None:
         ):
             _require(isinstance(signal[field], dict), f"signal {index} {field} must be an object")
 
-    for field in ("statistics", "modeled_costs", "capacity_estimate", "holdout_status", "provenance"):
+    for field in (
+        "statistics",
+        "modeled_costs",
+        "capacity_estimate",
+        "holdout_status",
+        "provenance",
+    ):
         _require(isinstance(record[field], dict), f"{field} must be an object")
     _require(
         isinstance(record["tested_regimes"], list)
@@ -151,7 +157,9 @@ def _validate_record(record: Any) -> None:
         "holdout_status.evaluated must be a bool",
     )
     passed = record["holdout_status"].get("passed")
-    _require(passed is None or isinstance(passed, bool), "holdout_status.passed must be bool or null")
+    _require(
+        passed is None or isinstance(passed, bool), "holdout_status.passed must be bool or null"
+    )
     _require(_is_json_value(record), "record contains a non-JSON or non-finite value")
     digest = record["provenance"].get("evidence_sha256")
     _require(
@@ -198,12 +206,15 @@ class EdgeLibrary:
     def _write(self, document: dict[str, Any]) -> None:
         _validate_document(document)
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(
-            document,
-            allow_nan=False,
-            indent=2,
-            sort_keys=True,
-        ) + "\n"
+        payload = (
+            json.dumps(
+                document,
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
         temporary: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -249,20 +260,30 @@ class EdgeLibrary:
         _validate_result(result, spec)
         _require(isinstance(stats, dict), "stats must be an object")
 
-        costs = modeled_costs if modeled_costs is not None else {
-            "status": "summarized_from_signals",
-            "mean_cost_return": (
-                sum(signal.cost_return for signal in result.signals) / len(result.signals)
-                if result.signals
-                else 0.0
-            ),
-        }
-        capacity = capacity_estimate if capacity_estimate is not None else {"status": "not_estimated"}
+        costs = (
+            modeled_costs
+            if modeled_costs is not None
+            else {
+                "status": "summarized_from_signals",
+                "mean_cost_return": (
+                    sum(signal.cost_return for signal in result.signals) / len(result.signals)
+                    if result.signals
+                    else 0.0
+                ),
+            }
+        )
+        capacity = (
+            capacity_estimate if capacity_estimate is not None else {"status": "not_estimated"}
+        )
         regimes = tested_regimes if tested_regimes is not None else []
-        holdout = holdout_status if holdout_status is not None else {
-            "evaluated": result.is_holdout,
-            "passed": None,
-        }
+        holdout = (
+            holdout_status
+            if holdout_status is not None
+            else {
+                "evaluated": result.is_holdout,
+                "passed": None,
+            }
+        )
         audit = {
             **(provenance or {}),
             "stored_at_utc": datetime.now(timezone.utc).isoformat(),

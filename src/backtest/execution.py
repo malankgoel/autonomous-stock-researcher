@@ -65,9 +65,7 @@ def resolve_entry(
     market_price = _finite_positive(entry_row.get(field), field)
     adv = _finite_positive(entry_row.get("adv"), "adv")
     shares = maximum_fill_shares(desired_shares, adv, cost_config)
-    entry_price = entry_price_with_impact(
-        market_price, shares, adv, cost_config, direction
-    )
+    entry_price = entry_price_with_impact(market_price, shares, adv, cost_config, direction)
     cost_return = round_trip_cost(market_price, shares, adv, cost_config)
     return EntryFill(
         ticker=ticker,

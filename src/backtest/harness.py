@@ -50,7 +50,9 @@ class BacktestHarness:
             # Also accept config/costs.yaml loaded directly.
             self.cost_config = dict(self.config)
         validation = self.config.get("validation", self.config)
-        self.horizons = tuple(int(value) for value in validation.get("horizons_days", [1, 5, 20, 60]))
+        self.horizons = tuple(
+            int(value) for value in validation.get("horizons_days", [1, 5, 20, 60])
+        )
         if not self.horizons or any(value <= 0 for value in self.horizons):
             raise ValueError("horizons_days must contain positive integers")
         self.desired_shares = float(self.config.get("order_shares", 1_000.0))
@@ -153,19 +155,12 @@ class BacktestHarness:
         )
 
     def _feature_rows(self, tickers: list[str], signal_date: date) -> dict[str, dict[str, Any]]:
-        prices = self.provider.get_prices(
-            tickers, signal_date, signal_date, as_of=signal_date
-        )
-        rows = {
-            str(row["ticker"]): row.to_dict()
-            for _, row in prices.iterrows()
-        }
+        prices = self.provider.get_prices(tickers, signal_date, signal_date, as_of=signal_date)
+        rows = {str(row["ticker"]): row.to_dict() for _, row in prices.iterrows()}
         fundamentals = self.provider.get_fundamentals(tickers, as_of=signal_date)
         for ticker, row in fundamentals.iterrows():
             rows.setdefault(str(ticker), {"ticker": str(ticker)}).update(row.to_dict())
-        events = self.provider.get_events(
-            tickers, signal_date, signal_date, as_of=signal_date
-        )
+        events = self.provider.get_events(tickers, signal_date, signal_date, as_of=signal_date)
         for _, event in events.iterrows():
             ticker = str(event["ticker"])
             rows.setdefault(ticker, {"ticker": ticker}).update(event.to_dict())
@@ -175,9 +170,7 @@ class BacktestHarness:
         self, frozen: _FrozenSignal, compiled: CompiledHypothesis, end: date
     ) -> SignalResult | None:
         fill = frozen.fill
-        prices = self.provider.get_prices(
-            [fill.ticker], fill.entry_date, end, as_of=end
-        )
+        prices = self.provider.get_prices([fill.ticker], fill.entry_date, end, as_of=end)
         if prices.empty:
             return None
         path = prices.sort_values("date").reset_index(drop=True)
@@ -206,9 +199,7 @@ class BacktestHarness:
             smallcap_relative = self._relative_returns(
                 forward, benchmarks.get("smallcap"), fill, end
             )
-            market_relative = self._relative_returns(
-                forward, benchmarks.get("market"), fill, end
-            )
+            market_relative = self._relative_returns(forward, benchmarks.get("market"), fill, end)
 
         return SignalResult(
             spec_id=compiled["spec_id"],
@@ -267,7 +258,10 @@ class BacktestHarness:
         if not isinstance(benchmark_ticker, str) or not benchmark_ticker:
             return {}
         prices = self.provider.get_prices(
-            [benchmark_ticker], fill.entry_date, end, as_of=end,
+            [benchmark_ticker],
+            fill.entry_date,
+            end,
+            as_of=end,
             fields=["date", "ticker", "open", "close"],
         )
         if prices.empty:
@@ -288,9 +282,7 @@ class BacktestHarness:
         return relative
 
     @staticmethod
-    def _entry_date(
-        signal_date: date, entry_timing: str, sessions: list[date]
-    ) -> date | None:
+    def _entry_date(signal_date: date, entry_timing: str, sessions: list[date]) -> date | None:
         if entry_timing == "same_close":
             return signal_date
         if entry_timing == "friday_close":
@@ -307,9 +299,7 @@ class BacktestHarness:
         if entry_timing == "next_open":
             return signal_date
         prior_day = signal_date - timedelta(days=1)
-        prior_sessions = self.provider.trading_days(
-            signal_date - timedelta(days=31), prior_day
-        )
+        prior_sessions = self.provider.trading_days(signal_date - timedelta(days=31), prior_day)
         return prior_sessions[-1] if prior_sessions else None
 
     @staticmethod
@@ -357,7 +347,11 @@ def _summaries(
     sharpes: dict[int, float] = {}
     for horizon in horizons:
         values = np.asarray(
-            [signal.forward_returns[horizon] for signal in signals if horizon in signal.forward_returns],
+            [
+                signal.forward_returns[horizon]
+                for signal in signals
+                if horizon in signal.forward_returns
+            ],
             dtype=float,
         )
         if values.size:

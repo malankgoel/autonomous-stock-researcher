@@ -28,9 +28,7 @@ def cohort_returns(result: BacktestResult, horizon: int = 20) -> np.ndarray:
         if value is None or not math.isfinite(float(value)):
             continue
         if signal.exit_date is None:
-            raise ValueError(
-                "primary-horizon signals require exit_date to enforce non-overlap"
-            )
+            raise ValueError("primary-horizon signals require exit_date to enforce non-overlap")
         by_date.setdefault(signal.signal_date, []).append(
             (float(value), signal.entry_date, signal.exit_date)
         )
@@ -100,17 +98,11 @@ def deflated_sharpe(
 
     skewness = float(stats.skew(returns, bias=False))
     kurtosis = float(stats.kurtosis(returns, fisher=False, bias=False))
-    denominator_squared = (
-        1.0
-        - skewness * sharpe
-        + ((kurtosis - 1.0) / 4.0) * sharpe**2
-    )
+    denominator_squared = 1.0 - skewness * sharpe + ((kurtosis - 1.0) / 4.0) * sharpe**2
     if not math.isfinite(denominator_squared) or denominator_squared <= 0.0:
         return 0.0
     statistic = (
-        (sharpe - expected_maximum)
-        * math.sqrt(returns.size - 1)
-        / math.sqrt(denominator_squared)
+        (sharpe - expected_maximum) * math.sqrt(returns.size - 1) / math.sqrt(denominator_squared)
     )
     return float(stats.norm.cdf(statistic))
 
