@@ -11,9 +11,12 @@ commission_min_usd: 1.0
 
 # Slippage as a function of order size relative to average daily volume (ADV).
 # impact_bps = coef * (order_adv_fraction ** exponent) * 10000
+# coef=0.03 gives ~67bps one-way impact at the 5%-ADV cap, a standard square-root
+# calibration (impact ~ k*sigma*sqrt(participation), k~1, daily sigma~3%). The prior
+# 0.1 implied ~224bps, ~3x too punitive. Still a conservative pre-TAQ placeholder.
 slippage:
   model: square_root          # square_root | linear
-  coef: 0.1
+  coef: 0.03
   exponent: 0.5
   participation_cap: 0.05      # max fraction of ADV fillable in one session
 
