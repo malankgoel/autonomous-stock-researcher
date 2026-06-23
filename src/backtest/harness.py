@@ -79,6 +79,8 @@ class BacktestHarness:
         compiled: CompiledHypothesis,
         start: date,
         end: date,
+        progress=None,
+        label_end: date | None = None,
     ) -> BacktestResult:
         """Evaluate a compiler-produced hypothesis over an explicit date range.
 
@@ -91,6 +93,10 @@ class BacktestHarness:
             raise ValueError("start must be on or before end")
         if compiled["direction"] != "long":
             raise ValueError("only long hypotheses are executable until borrow is modeled")
+        # Signals are generated within [start, end]; labels may read forward to
+        # label_end (>= end), so a year-by-year run is identical to one big run.
+        if label_end is None or label_end < end:
+            label_end = end
 
         sessions = self.provider.trading_days(start, end)
         universe_config = dict(self.config.get("universe", {}))
@@ -104,7 +110,10 @@ class BacktestHarness:
         seen_universe: set[str] = set()
 
         # PHASE 1: all reads are cut off at the signal or fill date.
-        for signal_date in sessions:
+        n_sessions = len(sessions)
+        for step, signal_date in enumerate(sessions):
+            if progress is not None and (step % 20 == 0 or step == n_sessions - 1):
+                progress("scanning sessions", step + 1, n_sessions)
             universe_as_of = self._universe_as_of(signal_date, compiled["entry_timing"])
             if universe_as_of is None:
                 continue
@@ -151,11 +160,14 @@ class BacktestHarness:
                     )
 
         # PHASE 2: future reads start only after every signal and fill is immutable.
-        results = [
-            result
-            for signal in frozen
-            if (result := self._label_signal(signal, compiled, end)) is not None
-        ]
+        n_frozen = len(frozen)
+        results = []
+        for step, signal in enumerate(frozen):
+            if progress is not None and (step % 200 == 0 or step == n_frozen - 1):
+                progress("labeling signals", step + 1, n_frozen)
+            labeled = self._label_signal(signal, compiled, label_end)
+            if labeled is not None:
+                results.append(labeled)
         means, sharpes = _summaries(results, self.horizons)
         return BacktestResult(
             spec_id=compiled["spec_id"],
