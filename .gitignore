@@ -13,7 +13,7 @@ venv/
 env/
 
 # Data (never commit licensed WRDS/CRSP/Compustat/IBES data)
-data/
+/data/
 data_cache/
 *.parquet
 *.csv
