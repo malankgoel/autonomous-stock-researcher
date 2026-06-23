@@ -16,6 +16,7 @@ single-date / date-range cross sections (universe + feature rows).
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -61,6 +62,7 @@ class WrdsDataProvider(DataProvider):
         end_year: int | None = None,
     ) -> None:
         self.proc = Path(processed_dir)
+        self.benchmark_map: dict = {}
         self._load_prices(start_year, end_year)
         self._fund = self._load_table("fundamentals.parquet", "avail_date")
         self._events = self._load_table("events.parquet", "rdq")
@@ -80,6 +82,11 @@ class WrdsDataProvider(DataProvider):
         df["tradable"] = df["tradable"].astype(bool)
         for c in _FLOAT32:
             df[c] = df[c].astype("float32")
+
+        bench = self._load_benchmarks(start_year, end_year)
+        if bench is not None and len(bench):
+            df = pd.concat([df, bench], ignore_index=True)
+
         df = df.sort_values(["permno", "date"]).reset_index(drop=True)
         self._p = df
 
@@ -95,6 +102,35 @@ class WrdsDataProvider(DataProvider):
         self._sessions = np.unique(ordered)
         offs = np.searchsorted(ordered, self._sessions)
         self._date_offsets = np.r_[offs, len(ordered)].astype("int64")
+
+    def _load_benchmarks(self, start_year, end_year) -> pd.DataFrame | None:
+        """Load synthetic sector/market index rows (if built) into the price panel."""
+        path = self.proc / "benchmarks.parquet"
+        if not path.exists():
+            return None
+        b = pd.read_parquet(path)
+        b["permno"] = pd.to_numeric(b["permno"], errors="coerce").astype("int32")
+        b["date"] = pd.to_datetime(b["date"])
+        if start_year is not None or end_year is not None:
+            lo = start_year if start_year is not None else 1900
+            hi = end_year if end_year is not None else 2100
+            b = b[(b["date"].dt.year >= lo) & (b["date"].dt.year <= hi)]
+        b["tradable"] = b["tradable"].astype(bool)
+        for c in _FLOAT32:
+            b[c] = b[c].astype("float32")
+        map_path = self.proc / "benchmark_map.json"
+        if map_path.exists():
+            self.benchmark_map = json.loads(map_path.read_text())
+        return b[_PRICE_COLS].copy()
+
+    def benchmarks_config(self) -> dict:
+        """Return the harness ``benchmarks`` config block from the loaded map."""
+        m = self.benchmark_map or {}
+        cfg = {}
+        for key in ("sector", "market", "smallcap"):
+            if key in m:
+                cfg[key] = m[key]
+        return cfg
 
     def _load_table(self, name: str, date_col: str) -> pd.DataFrame:
         df = pd.read_parquet(self.proc / name)
