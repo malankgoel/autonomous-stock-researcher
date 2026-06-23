@@ -23,9 +23,9 @@ Key honesty rules baked in here:
 
 Usage:  python scripts/02_build_panels.py
 """
+
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -48,9 +48,25 @@ def build_crsp() -> None:
     if out.exists():
         print(f"[crsp_clean] {out} exists — delete to rebuild. Skipping.")
         return
-    cols = ["PERMNO", "date", "OPENPRC", "ASKHI", "BIDLO", "PRC", "VOL", "RET",
-            "SHROUT", "CFACPR", "SHRCD", "EXCHCD", "SICCD", "TICKER", "COMNAM",
-            "DLRET", "DLSTCD"]
+    cols = [
+        "PERMNO",
+        "date",
+        "OPENPRC",
+        "ASKHI",
+        "BIDLO",
+        "PRC",
+        "VOL",
+        "RET",
+        "SHROUT",
+        "CFACPR",
+        "SHRCD",
+        "EXCHCD",
+        "SICCD",
+        "TICKER",
+        "COMNAM",
+        "DLRET",
+        "DLSTCD",
+    ]
     print(f"[crsp_clean] loading {src} ({len(cols)} cols)...")
     df = pd.read_parquet(src, columns=cols)
     print(f"   {len(df):,} rows loaded; cleaning...")
@@ -76,12 +92,12 @@ def build_crsp() -> None:
     # delisting return: numeric where present, else conventional performance-delist fill
     dlret = _num(df["DLRET"])
     dlstcd = _num(df["DLSTCD"])
-    perf = dlstcd.between(500, 599) | dlstcd.isin([551, 552, 560, 561, 562, 563,
-                                                   564, 572, 574, 580, 582, 584])
+    perf = dlstcd.between(500, 599) | dlstcd.isin(
+        [551, 552, 560, 561, 562, 563, 564, 572, 574, 580, 582, 584]
+    )
     is_nyse_amex = exchcd.isin([1, 2])
     fill = np.where(is_nyse_amex, -0.30, -0.55)
-    df["delisting_return"] = dlret.where(~(perf & dlret.isna()),
-                                         pd.Series(fill, index=df.index))
+    df["delisting_return"] = dlret.where(~(perf & dlret.isna()), pd.Series(fill, index=df.index))
 
     df = df.dropna(subset=["permno", "date"]).sort_values(["permno", "date"])
     # adv: trailing 20-session mean volume, shifted one session (no same-day leak)
@@ -89,9 +105,23 @@ def build_crsp() -> None:
     g = df.groupby("permno", sort=False)["volume"]
     df["adv"] = g.transform(lambda v: v.shift(1).rolling(20, min_periods=1).mean())
 
-    keep = ["permno", "date", "open", "high", "low", "close", "volume",
-            "dollar_volume", "ret", "adv", "tradable", "delisting_return",
-            "ticker", "comnam", "siccd"]
+    keep = [
+        "permno",
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "dollar_volume",
+        "ret",
+        "adv",
+        "tradable",
+        "delisting_return",
+        "ticker",
+        "comnam",
+        "siccd",
+    ]
     df = df[keep].copy()
     df["year"] = df["date"].dt.year.astype(str)
     print(f"   writing {out} partitioned by year...")
@@ -105,8 +135,9 @@ def _load_ccm() -> pd.DataFrame:
     ccm = ccm[ccm["linktype"].isin(["LU", "LC"]) & ccm["linkprim"].isin(["P", "C"])]
     ccm["lpermno"] = pd.to_numeric(ccm["lpermno"], errors="coerce").astype("Int64")
     ccm["linkdt"] = pd.to_datetime(ccm["linkdt"], errors="coerce", format="mixed")
-    ccm["linkenddt"] = pd.to_datetime(ccm["linkenddt"], errors="coerce",
-                                      format="mixed").fillna(pd.Timestamp("2100-01-01"))
+    ccm["linkenddt"] = pd.to_datetime(ccm["linkenddt"], errors="coerce", format="mixed").fillna(
+        pd.Timestamp("2100-01-01")
+    )
     return ccm.dropna(subset=["lpermno"])[["gvkey", "lpermno", "linkdt", "linkenddt"]]
 
 
@@ -127,10 +158,20 @@ def build_fundamentals() -> None:
     m = f.merge(ccm, on="gvkey", how="inner")
     m = m[(m["datadate"] >= m["linkdt"]) & (m["datadate"] <= m["linkenddt"])]
     m = m.rename(columns={"lpermno": "permno"})
-    keep = ["permno", "avail_date", "datadate", "book_equity", "sector",
-            "atq", "ltq", "ibq", "saleq", "niq", "epspxq"]
-    m = m.dropna(subset=["permno", "avail_date"])[keep].sort_values(
-        ["permno", "avail_date"])
+    keep = [
+        "permno",
+        "avail_date",
+        "datadate",
+        "book_equity",
+        "sector",
+        "atq",
+        "ltq",
+        "ibq",
+        "saleq",
+        "niq",
+        "epspxq",
+    ]
+    m = m.dropna(subset=["permno", "avail_date"])[keep].sort_values(["permno", "avail_date"])
     m.to_parquet(out, index=False)
     print(f"[fundamentals] {len(m):,} rows -> {out}")
 
@@ -152,8 +193,7 @@ def build_events() -> None:
     link["edate"] = pd.to_datetime(link["edate"], errors="coerce", format="mixed")
     link = link.dropna(subset=["permno"]).rename(columns={"ticker": "TICKER"})
 
-    m = e.merge(link[["TICKER", "permno", "score", "sdate", "edate"]],
-                on="TICKER", how="inner")
+    m = e.merge(link[["TICKER", "permno", "score", "sdate", "edate"]], on="TICKER", how="inner")
     m = m[(m["rdq"] >= m["sdate"]) & (m["rdq"] <= m["edate"])]
     # keep the best-scoring link per (TICKER, rdq)
     m = m.sort_values("score").drop_duplicates(["TICKER", "rdq"], keep="first")

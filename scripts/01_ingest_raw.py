@@ -18,6 +18,7 @@ Usage:
     pip install pyarrow            # parquet engine (see note at bottom if it fails)
     python scripts/01_ingest_raw.py
 """
+
 from __future__ import annotations
 
 import sys
