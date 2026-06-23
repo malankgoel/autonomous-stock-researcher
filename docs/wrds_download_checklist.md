@@ -32,38 +32,55 @@ Legend for each dataset: **WRDS path** (web-query navigation) → **columns to t
 Survivorship-free daily equity data. This is the backbone of `get_prices` and the
 universe.
 
-### A1. Daily Stock File → `crsp_dsf.csv`
-- **Path:** WRDS → CRSP → Annual Update → Stock / Security Files → **Daily Stock File (dsf)**
-- **Columns:** `permno, permco, date, cusip, prc, openprc, askhi, bidlo, vol, ret, retx, shrout, cfacpr, cfacshr, numtrd`
-- **Filters:** date 2003-01-01..latest. (No share/exchange filter here — filter at link time so you don't lose history.)
+**Use the CRSP Legacy (SIZ) tables, NOT "Stock - Version 2 (CIZ)."** The column names
+below are the legacy schema, legacy coverage runs through 31 Dec 2024 (plenty: the
+holdout ends 2023), and it keeps a separate delisting file with an explicit `dlret`
+that maps to the harness's `delisting_return` field. CIZ renames everything and folds
+delisting into the daily return, which would mean rewriting the column map and filters.
+
+### A1. Daily Stock File (with names + delisting merged) → `crsp_dsf.csv`
+- **Path:** WRDS → CRSP → Annual Update → Legacy Data – Stock / Security Files → **Daily Stock File**
+- **Company codes step:** choose **"Search the entire database"** — do NOT enter tickers.
+  We need every survivorship-free security for a universe-wide backtest.
+- **Filters:** date 2003-01-01..2024-12-31. No share/exchange filter in the query — we
+  filter in code so history isn't lost.
+- **Columns to tick** (this combined form merges names + delisting onto the daily file,
+  so A2 and A3 below are folded in here):
+  - keys: `permno, date`
+  - identity (point-in-time, attached by date): `cusip, ncusip, comnam, ticker, permco, shrcd, shrcls, exchcd, siccd, naics, primexch`
+  - daily: `prc, openprc, askhi, bidlo, vol, numtrd, ret, retx, shrout, cfacpr, cfacshr`
+  - delisting: `dlstcd, dlret, dlretx, dlamt, dlprc, nextdt`
+- **Do NOT tick:** header vars `hexcd/hsiccd/hsicmg/hsicig` (latest-value, would leak
+  future classification — use plain `siccd/exchcd`); index returns `vwretd/ewretd/sprtrn`
+  (pull once from A4 instead); distributions `distcd/divamt/facpr/facshr/dclrdt/rcrddt/paydt`
+  (`cfacpr/cfacshr` already cover adjustment); `bid/ask` (have bidlo/askhi).
 - **Maps to:** `open=openprc`, `high=askhi`, `low=bidlo`, `close=abs(prc)`, `volume=vol`,
-  `dollar_volume=close*volume`, plus `cfacpr/cfacshr` for split/dividend adjustment,
-  `shrout` for market cap. `prc` is **signed** (negative = quote midpoint, no trade) — take `abs()`.
-  This is the biggest file (multi-GB); if the web tool times out, split into ~5-year chunks.
+  `dollar_volume=close*volume`, `cfacpr/cfacshr` for split/dividend adjustment, `shrout`
+  for market cap, `delisting_return=dlret` on the final row, and identity columns for
+  point-in-time `tradable_tickers` membership + sector fallback. `prc` is **signed**
+  (negative = quote midpoint) — take `abs()`. Biggest file (multi-GB); if it times out,
+  pull in ~5-year chunks.
+  Missing `dlret` on a performance delist (`dlstcd` 500/520-584) → code applies the
+  standard -30% (NYSE/AMEX) / -55% (Nasdaq) convention.
 
-### A2. Names history → `crsp_stocknames.csv`
-- **Path:** WRDS → CRSP → Annual Update → Stock / Security Files → **CRSP Stocknames** (or `dsenames`)
-- **Columns:** `permno, namedt, nameenddt, ticker, comnam, ncusip, cusip, shrcd, exchcd, siccd, naics, hexcd`
-- **Filters:** none (it's small). You'll apply `shrcd in (10,11)` (common stock) and
-  `exchcd in (1,2,3)` (NYSE/AMEX/Nasdaq) in code, point-in-time via `namedt/nameenddt`.
-- **Maps to:** `permno → ticker` mapping for `get_prices`, and the survivorship-free
-  membership for `tradable_tickers`. `siccd` is the fallback sector source.
+### A2 + A3. Names history + Delisting — FOLDED INTO A1
+The Legacy Daily Stock File query above merges the point-in-time identity columns
+(`ticker, shrcd, exchcd, siccd, ...`) and the delisting columns (`dlret, dlstcd, ...`)
+directly onto the daily rows, so separate Names and Delisting pulls are not needed.
 
-### A3. Delisting → `crsp_dsedelist.csv`
-- **Path:** WRDS → CRSP → Annual Update → Stock / Security Files → **CRSP Daily Delisting** (`dsedelist`)
-- **Columns:** `permno, dlstdt, dlstcd, dlret, dlretx, dlprc, nextdt`
-- **Filters:** date 2003..latest.
-- **Maps to:** `delisting_return = dlret` on a name's final row. Critical for honesty —
-  drops the survivorship bias the README calls out. If `dlret` is missing for a
-  performance delist (`dlstcd` 500/520-584), code applies the standard -30% (NYSE/AMEX)
-  / -55% (Nasdaq) convention.
+### A4. Market / small-cap / sector benchmarks — DERIVE FROM A1, no download
+Not a separate pull. The benchmarks the harness uses are built in code from the A1
+daily file, which carries every name's daily `ret` and `prc × shrout` (market-cap
+weight) on every date:
+- **Market (≈ `vwretd`):** cap-weighted mean universe return per day.
+- **Small-cap / equal-weighted:** equal-weighted, or bottom market-cap buckets.
+- **Sector:** group by `siccd` / GICS sector and average within group.
 
-### A4. Daily market index → `crsp_dsi.csv`
-- **Path:** WRDS → CRSP → Annual Update → Index / Treasury and Inflation → **CRSP Daily Market Indices** (`dsi`)
-- **Columns:** `date, vwretd, vwretx, ewretd, ewretx, sprtrn, totval`
-- **Filters:** date 2003..latest.
-- **Maps to:** the `market` benchmark for `market_relative_returns`. Value-weighted (`vwretd`)
-  is the broad-market line; equal-weighted (`ewretd`) is a small-cap-tilted cross-check.
+This is how the engine is meant to form point-in-time sector-relative returns anyway,
+so an external CRSP index file is redundant. (The "Legacy Data – Index / Stock File
+Indexes" menu only holds pre-formed decile portfolios, which we don't use. If you ever
+want CRSP's official aggregate `sprtrn`/`vwretd` series, it's the separate "CRSP Market
+Indices" tile — optional, not needed for the reproduction gate.)
 
 ---
 
@@ -72,29 +89,30 @@ universe.
 Point-in-time fundamentals. The availability stamp is **`rdq`** (report date), not
 `datadate` (period end) — that distinction is the whole guardrail.
 
-### B1. Fundamentals Quarterly → `comp_fundq.csv`
+### B1. Fundamentals Quarterly (sector descriptors merged) → `comp_fundq.csv`
 - **Path:** WRDS → Compustat - Capital IQ → Compustat → North America → **Fundamentals Quarterly**
-- **Columns:** `gvkey, datadate, rdq, fyearq, fqtr, ceqq, seqq, atq, ltq, pstkq, txditcq, cshoq, prccq, ajexq, epspxq, epsfxq, ibq, niq, saleq, cik, tic, cusip`
-- **Screening (set in the query form):** `Industry Format = INDL`, `Data Format = STD`,
-  `Population Source = D`, `Consolidation Level = C`. Date `datadate` 2002-06..latest
-  (start a bit early so the first 2003 quarters have a prior filing).
-- **Maps to:** `filing_date = rdq`; `book_to_market = book_equity / market_cap`;
-  book equity ≈ `ceqq + txditcq - pstkq` (fallback `seqq`); sector via the company file.
+- **Company codes:** **Search the entire database.** Date `datadate` **2002-06 → 2026-06**
+  (start early so the first 2003 quarters have a prior filing).
+- **Screening toggles:** Consolidation = **C**; Industry Format = **INDL only** (uncheck FS —
+  it duplicates gvkey-datadate rows for financials); Data Format = **STD**; Quarter Type =
+  **Fiscal**; Currency = **USD only** (uncheck CAD); Company Status = **Active + Inactive**
+  (keep both — inactive = delisted firms, needed for survivorship-free).
+- **Columns to tick** (~24; this form exposes the GICS/SIC descriptors inline, so the
+  separate Company file B3 is folded in here):
+  - keys + identity + sector: `gvkey, datadate, rdq, fyearq, fqtr, tic, cusip, cik, conm, sic, naics, gsector, ggroup, gind`
+  - book equity + leverage: `ceqq, seqq, pstkq, txditcq, atq, ltq`
+  - income: `ibq, niq, saleq, epspxq, epsfxq`
+- **Do NOT tick:** the `*y` year-to-date cash-flow duplicates, the EPS-effect / core-earnings /
+  pension / option / utility / fair-value blocks, and quarterly price/market-cap
+  (`prccq, mkvaltq, cshoq` — market cap comes from CRSP `prc × shrout`, daily and more precise).
+- **Maps to:** `filing_date = rdq`; `book_to_market = book_equity / market_cap` with book
+  equity ≈ `ceqq + txditcq - pstkq` (fallback `seqq`) and market cap from CRSP; `sector = gsector`
+  (current GICS, `sic` fallback — drives `sector_relative_returns`, the primary success metric).
 
-### B2. Fundamentals Annual → `comp_funda.csv`
-- **Path:** same menu → **Fundamentals Annual**
-- **Columns:** `gvkey, datadate, fyear, ceq, seq, at, lt, pstk, pstkl, pstkrv, txditc, csho, prcc_f, sich`
-- **Screening:** same INDL/STD/D/C. Date 2002..latest.
-- **Maps to:** cleaner annual book equity (`ceq`) for the classic book-to-market; `sich`
-  is the per-period SIC if you prefer it over the company-level one. Optional but cheap —
-  grab it while you're in there.
-
-### B3. Company / sector → `comp_company.csv`
-- **Path:** same menu → **Company** (Company-level descriptors)
-- **Columns:** `gvkey, conm, tic, cusip, cik, sic, naics, gsector, ggroup, gind, gsubind, fic`
-- **Filters:** none (one row per company).
-- **Maps to:** `sector` in `get_fundamentals` — use GICS `gsector` (preferred) and keep
-  `sic` as fallback. Drives `sector_relative_returns`, which is the **primary success metric**.
+### B2 + B3. Annual fundamentals + Company file — SKIP / FOLDED IN
+Annual (`funda`) is optional and not needed for the gate — quarterly `ceqq` is sufficient
+for book-to-market. The Company/sector descriptors are folded into B1 above, so no separate
+Company download is needed.
 
 ### B4. CRSP/Compustat link → `ccm_lnkhist.csv`
 - **Path:** WRDS → CRSP → Annual Update → CRSP/Compustat Merged → **Linking Table** (`ccmxpf_lnkhist`)
@@ -110,29 +128,22 @@ Point-in-time fundamentals. The availability stamp is **`rdq`** (report date), n
 
 Powers `get_events(event_type="earnings")`: `ticker, rdq, earnings_surprise_pct`.
 
-### C1. Surprise Summary → `ibes_surpsum.csv`
-- **Path:** WRDS → IBES → IBES Academic → **Surprise** (Summary Surprise, US `surpsum`)
-- **Columns:** `ticker, oftic, cusip, cname, anndats, pyear, pmon, pends, actual, surpmean, surpstdev, suescore`
-- **Filters:** `anndats` 2003..latest; region = US.
+### C1. Surprise History → `ibes_surpsum.csv`
+- **Path:** WRDS → LSEG → IBES → IBES Academic → Summary History → **Surprise History** (`surpsum`)
+- **Settings:** Universe = **US File**; Measure = **EPS**; FISCALP = **QTR** (quarterly —
+  PEAD is a quarterly-earnings drift); date `anndats` **2003 → present**; search entire database.
+- **Columns (tick all available):** `ticker, oftic, pyear, pmon, actual, anndats, suescore, surpmean, surpstdev, usfirm`
 - **Maps to:** `rdq = anndats` (announcement = availability time), and
   `earnings_surprise_pct = (actual - surpmean) / |surpmean|` — or use `suescore`
-  (standardized unexpected earnings) directly as the surprise feature. This is the cleanest
-  single PEAD source.
+  (standardized unexpected earnings) directly. This file has **no CUSIP**, so it links to
+  CRSP only via the IBES ticker → C2 below is required.
 
-### C2. Summary Statistics, EPS US → `ibes_statsum.csv`  *(backup / flexibility)*
-- **Path:** WRDS → IBES → IBES Academic → Summary History → **Summary Statistics** (`statsum_epsus`)
-- **Columns:** `ticker, cusip, oftic, cname, statpers, fpi, measure, numest, meanest, medest, stdev, actual, anndats_act, fpedats`
-- **Filters:** `measure = EPS`, `fpi = 6` (quarterly), `statpers` 2003..latest.
-- **Maps to:** lets you compute the surprise yourself (`actual - meanest`) and gives
-  estimate dispersion (`stdev`, `numest`) as extra Tier 1 features. Optional if C1 is enough,
-  but worth grabbing on the one-shot pass.
-
-### C3. IBES↔CRSP link (ICLINK) → `iclink.csv`
-- **Path:** WRDS → WRDS Applications / Linking → **ICLINK (IBES-CRSP Link)** (`wrdsapps.ibcrsphist`)
-- **Columns:** `ticker, permno, ncusip, score, sdate, edate, comnam`
-- **Filters:** none.
-- **Maps to:** IBES `ticker` ↔ CRSP `permno`. Prefer `score in (0,1)` (best matches).
-  Needed so earnings events line up with the right price series.
+### C2. IBES↔CRSP link → `iclink.csv`
+- **Path:** WRDS → LSEG → IBES → Linking IBES to CRSP → **IBES CRSP Link (Beta)** (`ibcrsphist`)
+- **Columns:** `ticker, ncusip, permno, sdate, edate, score`  (all 6 — small file)
+- **Filters:** none; search entire database.
+- **Maps to:** IBES `ticker` ↔ CRSP `permno`, valid `sdate ≤ date ≤ edate`. Prefer best
+  `score` matches. Without it the surprise events can't attach to the price series.
 
 ---
 
