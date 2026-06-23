@@ -185,7 +185,15 @@ class BacktestHarness:
         self, frozen: _FrozenSignal, compiled: CompiledHypothesis, end: date
     ) -> SignalResult | None:
         fill = frozen.fill
-        prices = self.provider.get_prices([fill.ticker], fill.entry_date, end, as_of=end)
+        # Labeling only needs up to the longest horizon (or exit horizon) plus a small
+        # buffer; reading each name's path to the backtest end is the weekend-spec
+        # bottleneck. Cap the forward window (~2x calendar days per session + slack).
+        max_h = max(self.horizons)
+        exit_h = compiled["exit_rule"].get("horizon")
+        if isinstance(exit_h, int):
+            max_h = max(max_h, exit_h)
+        cap_end = min(end, fill.entry_date + timedelta(days=int(max_h) * 2 + 15))
+        prices = self.provider.get_prices([fill.ticker], fill.entry_date, cap_end, as_of=end)
         if prices.empty:
             return None
         path = prices.sort_values("date").reset_index(drop=True)
@@ -257,6 +265,8 @@ class BacktestHarness:
                 if exit_fill.exit_date <= horizon_date
                 else float(path.iloc[index]["close"])
             )
+            if not math.isfinite(exit_price) or exit_price <= 0.0:
+                continue
             gross = exit_price / fill.market_price - 1.0
             if direction == "short":
                 gross = -gross
@@ -369,6 +379,7 @@ def _summaries(
             ],
             dtype=float,
         )
+        values = values[np.isfinite(values)]
         if values.size:
             means[horizon] = float(values.mean())
         if values.size >= 2 and values.std(ddof=1) > 0.0:
