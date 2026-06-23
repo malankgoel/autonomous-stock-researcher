@@ -1,0 +1,14 @@
+{
+  "id": "pead_sue_v1",
+  "description": "Long standardized positive earnings surprises (SUE > 1.5), liquid universe, hold 20 days",
+  "source": "human",
+  "tier": 1,
+  "generation_batch": "manual_seed",
+  "universe_filter": {"min_dollar_volume": 10000000, "cap": "any"},
+  "entry_condition": {"suescore": {">": 1.5}},
+  "direction": "long",
+  "horizon_days": 20,
+  "entry_timing": "next_open",
+  "exit_rule": {"horizon": 20, "stop": -0.12},
+  "features": ["suescore", "rdq", "open", "close"]
+}
