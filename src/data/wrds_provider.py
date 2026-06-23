@@ -25,11 +25,31 @@ import pandas as pd
 from .interface import DataProvider
 
 _PRICE_COLS = [
-    "permno", "date", "open", "high", "low", "close", "volume",
-    "dollar_volume", "ret", "adv", "tradable", "delisting_return", "siccd",
+    "permno",
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "dollar_volume",
+    "ret",
+    "adv",
+    "tradable",
+    "delisting_return",
+    "siccd",
 ]
-_FLOAT32 = ["open", "high", "low", "close", "volume", "dollar_volume",
-            "ret", "adv", "delisting_return"]
+_FLOAT32 = [
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "dollar_volume",
+    "ret",
+    "adv",
+    "delisting_return",
+]
 
 
 class WrdsDataProvider(DataProvider):
@@ -66,8 +86,7 @@ class WrdsDataProvider(DataProvider):
         permnos = df["permno"].to_numpy()
         bounds = np.flatnonzero(np.r_[True, permnos[1:] != permnos[:-1]])
         ends = np.r_[bounds[1:], len(permnos)]
-        self._permno_slice = {int(permnos[b]): (int(b), int(e))
-                              for b, e in zip(bounds, ends)}
+        self._permno_slice = {int(permnos[b]): (int(b), int(e)) for b, e in zip(bounds, ends)}
 
         dates = df["date"].to_numpy()
         order = np.argsort(dates, kind="stable")
@@ -121,7 +140,7 @@ class WrdsDataProvider(DataProvider):
                 span = self._permno_slice.get(p)
                 if span is None:
                     continue
-                blk = self._p.iloc[span[0]:span[1]]
+                blk = self._p.iloc[span[0] : span[1]]
                 d = blk["date"].to_numpy()
                 frames.append(blk[(d >= s) & (d <= cutoff)])
             sub = pd.concat(frames) if frames else self._p.iloc[0:0]
@@ -130,7 +149,7 @@ class WrdsDataProvider(DataProvider):
             hi = int(np.searchsorted(self._sessions, cutoff, "right"))
             if hi <= lo:
                 return self._format_prices(self._p.iloc[0:0], fields)
-            pos = self._date_order[self._date_offsets[lo]:self._date_offsets[hi]]
+            pos = self._date_order[self._date_offsets[lo] : self._date_offsets[hi]]
             blk = self._p.iloc[pos]
             sub = blk[blk["permno"].isin(permset)]
         return self._format_prices(sub, fields)
@@ -160,8 +179,17 @@ class WrdsDataProvider(DataProvider):
         latest["ticker"] = latest["permno"].astype(str)
         latest["filing_date"] = latest["avail_date"].dt.date
         latest = latest.set_index("ticker")
-        cols = ["filing_date", "book_equity", "sector", "atq", "ltq", "ibq",
-                "saleq", "niq", "epspxq"]
+        cols = [
+            "filing_date",
+            "book_equity",
+            "sector",
+            "atq",
+            "ltq",
+            "ibq",
+            "saleq",
+            "niq",
+            "epspxq",
+        ]
         if fields is not None:
             cols = ["filing_date"] + [c for c in fields if c in latest.columns]
         return latest[[c for c in cols if c in latest.columns]].sort_index()
@@ -186,8 +214,30 @@ class WrdsDataProvider(DataProvider):
 
     def available_features(self) -> set[str]:
         return {
-            "date", "ticker", "open", "high", "low", "close", "volume", "adv",
-            "dollar_volume", "ret", "delisting_return", "weekday", "session",
-            "siccd", "rdq", "earnings_surprise_pct", "suescore", "filing_date",
-            "book_equity", "sector", "atq", "ltq", "ibq", "saleq", "niq", "epspxq",
+            "date",
+            "ticker",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "adv",
+            "dollar_volume",
+            "ret",
+            "delisting_return",
+            "weekday",
+            "session",
+            "siccd",
+            "rdq",
+            "earnings_surprise_pct",
+            "suescore",
+            "filing_date",
+            "book_equity",
+            "sector",
+            "atq",
+            "ltq",
+            "ibq",
+            "saleq",
+            "niq",
+            "epspxq",
         }
