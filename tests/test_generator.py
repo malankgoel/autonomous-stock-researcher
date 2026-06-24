@@ -81,7 +81,11 @@ def test_generate_returns_validated_specs():
         validate(spec)  # raises on any structural problem
         assert spec.tier == 1
         assert spec.source == "llm"
-        assert spec.direction is Direction.LONG
+        # Long-only families are LONG; cross-sectional spread specs are dollar-neutral.
+        if spec.cross_sectional is None:
+            assert spec.direction is Direction.LONG
+        else:
+            assert spec.direction is Direction.NEUTRAL
         assert spec.generation_batch == "b1"
 
 
@@ -106,6 +110,28 @@ def test_feature_catalog_is_respected():
     for spec in specs:
         assert set(spec.features) <= catalog
     assert not any("suescore" in s.id for s in specs)
+
+
+def test_spread_family_emits_valid_cross_sectional_specs():
+    provider = CatalogOnlyProvider(WRDS_CATALOG)
+    specs = generate(
+        {"available_features": WRDS_CATALOG}, families=("spread",), generation_batch="b1"
+    )
+    assert specs
+    for spec in specs:
+        validate(spec)
+        assert spec.cross_sectional is not None
+        assert spec.direction is Direction.NEUTRAL
+        cs = spec.cross_sectional
+        assert cs["feature"] in spec.features
+        assert cs["long_quantile"] != cs["short_quantile"]
+        compile_spec(spec, provider)  # must compile through the real compiler
+
+
+def test_default_batch_includes_drift_and_spread():
+    specs = generate({"available_features": WRDS_CATALOG}, generation_batch="b1")
+    fams = {s.id.split("_")[1] for s in specs}
+    assert "drift" in fams and "spread" in fams
 
 
 def test_n_limit_and_determinism():

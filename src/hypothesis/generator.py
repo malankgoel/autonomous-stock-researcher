@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+from hypothesis.llm_generator import llm_candidates
 from hypothesis.spec import HypothesisSpec, validate
 
 # Day names as the data layer encodes the ``weekday`` feature (see the seed
@@ -85,6 +86,52 @@ def _spec(
         exit_rule=exit_rule,
         features=features,
     )
+
+
+def _spread_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
+    """Cross-sectional long-short spreads: long the top quantile, short the bottom.
+
+    This is the family that can actually express the PEAD alpha — the validated edge
+    lives in the top-minus-bottom decile spread, not in any single leg. Ranking is on
+    an event feature (sparse, point-in-time), so signal volume is bounded like the
+    drift family. Each spec is dollar-neutral (direction NEUTRAL) and routed through
+    the harness's cross-sectional path; shorts pay trading cost now and a per-name
+    borrow cost once the borrow model lands.
+    """
+    out: list[HypothesisSpec] = []
+    for feature in ("suescore", "earnings_surprise_pct"):
+        if feature not in available:
+            continue
+        for nq in (5, 10):
+            for h in (20, 60):
+                out.append(
+                    HypothesisSpec(
+                        id=f"gen_spread_{feature}_q{nq}_h{h}",
+                        description=(
+                            f"Long top / short bottom {feature} quantile (q{nq}), "
+                            f"hold {h}d, rebalance {h}d"
+                        ),
+                        source="llm",
+                        tier=1,
+                        generation_batch=batch,
+                        universe_filter=dict(_UNIVERSE),
+                        entry_condition={},
+                        direction="neutral",
+                        horizon_days=h,
+                        entry_timing="next_open",
+                        exit_rule={"horizon": h},
+                        features=[feature],
+                        cross_sectional={
+                            "feature": feature,
+                            "n_quantiles": nq,
+                            "long_quantile": "top",
+                            "short_quantile": "bottom",
+                            "formation_window_days": 25,
+                            "rebalance_days": h,
+                        },
+                    )
+                )
+    return out
 
 
 def _calendar_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
@@ -172,8 +219,10 @@ def _fundamental_candidates(batch: str, available: set[str]) -> list[HypothesisS
 # compile/backtest/survival path and are counted as trials the same way.
 _PROPOSERS: dict[str, Callable[[str, set[str]], list[HypothesisSpec]]] = {
     "drift": _drift_candidates,
+    "spread": _spread_candidates,
     "fundamental": _fundamental_candidates,
     "calendar": _calendar_candidates,
+    "llm": llm_candidates,
 }
 
 # Families that signal the ENTIRE liquid universe on most sessions, because their
@@ -189,9 +238,12 @@ _PROPOSERS: dict[str, Callable[[str, set[str]], list[HypothesisSpec]]] = {
 # opt-in (pass families=(...)) for experimentation only.
 _UNIVERSE_WIDE_FAMILIES: frozenset[str] = frozenset({"calendar", "fundamental"})
 
-# Families run by default: only the event-conditioned (sparse, ~2k signals/yr)
-# family, which is both tractable and a genuine cross-sectional selection signal.
-_DEFAULT_FAMILIES: tuple[str, ...] = ("drift",)
+# Families run by default. Both are event-conditioned (sparse, bounded signal
+# volume): ``drift`` is the long-only control family (known to fail after costs), and
+# ``spread`` is the cross-sectional long-short family that can actually express the
+# PEAD alpha. Running them together lets the survival filter judge spreads against
+# their own long-only controls under one honest multiple-testing count.
+_DEFAULT_FAMILIES: tuple[str, ...] = ("drift", "spread")
 
 
 def generate(
