@@ -88,10 +88,17 @@ def build_config(provider: WrdsDataProvider) -> dict:
 
 
 def run_one(compiled, provider, harness, batch, sy, ey, label_end):
-    """Backtest a single compiled spec year-by-year with resumable checkpoints."""
+    """Backtest a single compiled spec year-by-year with resumable checkpoints.
+
+    Returns ``(windows, computed)`` where ``computed`` is True only if at least one
+    year was actually backtested (vs. fully loaded from checkpoints). Callers use
+    that to skip the per-spec interim re-summary when nothing new was computed, so
+    a pure assembly pass over cached specs doesn't pay the O(n^2) DSR refresh.
+    """
     out_dir = CKPT / batch / compiled["spec_id"]
     out_dir.mkdir(parents=True, exist_ok=True)
     windows = []
+    computed = False
     for year in range(sy, ey + 1):
         ck = out_dir / f"year={year}.pkl"
         if ck.exists():
@@ -102,10 +109,11 @@ def run_one(compiled, provider, harness, batch, sy, ey, label_end):
         )
         ck.write_bytes(pickle.dumps(res))
         windows.append(res)
-    return windows
+        computed = True
+    return windows, computed
 
 
-def summarize(summaries, n_planned, batch, sy, ey, config, complete):
+def summarize(summaries, n_planned, batch, sy, ey, config, complete, out_name="summary.json"):
     """Build the survival-filter rows from the specs finished so far and persist them.
 
     Writes ``summary.json`` after every spec so an interrupted overnight run still
@@ -124,7 +132,7 @@ def summarize(summaries, n_planned, batch, sy, ey, config, complete):
     rows.sort(key=lambda r: r[4], reverse=True)
     survivors = [r[0] for r in rows if r[4] > bar]
 
-    out = CKPT / batch / "summary.json"
+    out = CKPT / batch / out_name
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(
@@ -173,6 +181,18 @@ def main() -> int:
                 "session/week (~50-300x more signals to label, and ~0 sector-relative "
                 "edge by construction). Expect very long runs. See generator.py.\n"
             )
+    # --shard i/n: process only specs i, i+n, i+2n, ... (1-based). Disjoint shards
+    # write disjoint per-(spec,year) checkpoints, so 2-3 can run in parallel safely.
+    # After all shards finish, re-run with NO --shard to assemble the full table
+    # (it reads every cached checkpoint and counts all trials — near-instant).
+    shard_i, shard_n = 1, 1
+    if "--shard" in args:
+        i = args.index("--shard")
+        shard_i, shard_n = (int(x) for x in args[i + 1].split("/"))
+        del args[i : i + 2]
+        if not (1 <= shard_i <= shard_n):
+            print(f"!! bad --shard {shard_i}/{shard_n}; need 1 <= i <= n.")
+            return 1
     batch = args[0] if args and not args[0].isdigit() else "gen_batch_1"
     nums = [a for a in args if a.isdigit()]
     sy = int(nums[0]) if len(nums) > 0 else 2004
@@ -203,35 +223,58 @@ def main() -> int:
             compiled.append(compile_spec(spec, provider))
         except CompileError as exc:
             print(f"  skip {spec.id}: {exc}")
-    print(f"batch '{batch}': {len(compiled)} specs proposed and compiled, {sy}-{ey} exploration.\n")
+    n_total = len(compiled)
+    if shard_n > 1:
+        compiled = compiled[shard_i - 1 :: shard_n]  # strided slice = balanced load
+        out_name = f"summary_shard{shard_i}of{shard_n}.json"
+        print(
+            f"batch '{batch}': shard {shard_i}/{shard_n} -> {len(compiled)} of {n_total} "
+            f"specs, {sy}-{ey} exploration.\n"
+        )
+    else:
+        out_name = "summary.json"
+        print(f"batch '{batch}': {n_total} specs proposed and compiled, {sy}-{ey} exploration.\n")
 
     # --- backtest + walk-forward every spec, refreshing the summary each time --
     n = len(compiled)
     summaries = {}  # spec_id -> walk_forward dict
+    rows, survivors, bar = [], [], 1 - 0.05
     for i, c in enumerate(compiled, 1):
         print(f"[{i}/{n}] {c['spec_id']}")
-        windows = run_one(c, provider, harness, batch, sy, ey, label_end)
+        windows, computed = run_one(c, provider, harness, batch, sy, ey, label_end)
         summaries[c["spec_id"]] = walk_forward(windows, config)
-        # Refresh summary.json after every spec so an interrupted run is still readable.
-        rows, survivors, bar = summarize(summaries, n, batch, sy, ey, config, complete=(i == n))
-        best = rows[0] if rows else None
-        if best is not None:
-            print(
-                f"      interim {i}/{n} done | best {best[0]} DSR={best[4]:.3f} | "
-                f"survivors so far: {survivors if survivors else 'none'}"
+        # Refresh the on-disk summary only when this spec was actually computed (so an
+        # interrupted real run stays readable) or on the final spec. A pure assembly
+        # pass over cached specs thus does ONE summarize at the end, not n growing ones.
+        if computed or i == n:
+            rows, survivors, bar = summarize(
+                summaries, n, batch, sy, ey, config, complete=(i == n), out_name=out_name
             )
+            if computed and rows:
+                best = rows[0]
+                print(
+                    f"      interim {i}/{n} done | best {best[0]} DSR={best[4]:.3f} | "
+                    f"survivors so far: {survivors if survivors else 'none'}"
+                )
 
-    # --- final survival filter over the WHOLE batch (honest multiple testing) --
+    # --- final survival filter over this run's specs --------------------------
+    scope = f"shard {shard_i}/{shard_n}" if shard_n > 1 else "full batch"
     print(
-        f"\n=== SURVIVAL FILTER (batch '{batch}', {sy}-{ey}, {len(summaries)} trials counted) ==="
+        f"\n=== SURVIVAL FILTER (batch '{batch}', {sy}-{ey}, {scope}, {len(summaries)} trials) ==="
     )
     print(f"  {'spec':<34}{'cohorts':>8}{'mean sec-rel':>14}{'Sharpe':>9}{'DSR':>8}  verdict")
     for spec_id, n_c, mr, shp, dsr in rows:
         verdict = "PASS" if dsr > bar else "fail"
         print(f"  {spec_id:<34}{n_c:>8}{mr:>+14.4%}{shp:>+9.3f}{dsr:>8.3f}  {verdict}")
-    print(f"\n  Bar: DSR > {bar:.2f} after counting every one of {len(summaries)} trials.")
-    print(f"  Survivors: {survivors if survivors else 'none'}.  Holdout 2020-2023 untouched.")
-    print(f"  wrote {(CKPT / batch / 'summary.json').relative_to(ROOT)}")
+    print(f"\n  Bar: DSR > {bar:.2f}.  Survivors: {survivors if survivors else 'none'}.")
+    print(f"  wrote {(CKPT / batch / out_name).relative_to(ROOT)}")
+    if shard_n > 1:
+        print(
+            "  NOTE: this is one shard's specs only — the DSR here counts just this shard's "
+            f"trials, NOT all {n_total}. After every shard finishes, re-run with NO --shard "
+            "to assemble the authoritative full-batch table from the cached checkpoints."
+        )
+    print("  Holdout 2020-2023 untouched.")
     return 0
 
 
