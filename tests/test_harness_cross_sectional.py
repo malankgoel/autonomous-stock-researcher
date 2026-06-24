@@ -50,8 +50,41 @@ def _spread_spec() -> HypothesisSpec:
     )
 
 
-def _run():
-    provider = SyntheticDataProvider(
+def _spread_spec_production(horizon: int) -> HypothesisSpec:
+    """Mirror the generator's PRODUCTION cross-sectional config.
+
+    The cadence is decoupled from the hold (rebalance ~monthly, window 35) exactly as
+    src/hypothesis/generator.py now emits. This is the regression guard for the
+    event-alignment fix: the old config tied rebalance_days to the hold horizon, so a
+    60-day hold rebalanced every 60 days with a 25-day lookback and dropped/staled most
+    announcements. With the fix, a 60-day hold must still recover the injected drift.
+    """
+    return HypothesisSpec(
+        id=f"recover_xs_prod_h{horizon}",
+        description="production-config long-short earnings-surprise spread",
+        source="human",
+        tier=1,
+        generation_batch="test",
+        universe_filter={"min_dollar_volume": 0, "cap": "any"},
+        entry_condition={},
+        direction=Direction.NEUTRAL,
+        horizon_days=horizon,
+        entry_timing="next_open",
+        exit_rule={"horizon": horizon},
+        features=["earnings_surprise_pct"],
+        cross_sectional={
+            "feature": "earnings_surprise_pct",
+            "n_quantiles": 2,
+            "long_quantile": "top",
+            "short_quantile": "bottom",
+            "formation_window_days": 35,
+            "rebalance_days": 21,
+        },
+    )
+
+
+def _provider() -> SyntheticDataProvider:
+    return SyntheticDataProvider(
         seed=2024,
         injected_effect={
             "post_surprise_daily_drift": 0.004,
@@ -62,12 +95,30 @@ def _run():
         end=date(2019, 12, 31),
         tickers=[f"SYN{i:03d}" for i in range(40)],
     )
-    compiled = compile_spec(_spread_spec(), provider)
-    result = BacktestHarness(
+
+
+def _run_spec(spec: HypothesisSpec, costs: dict = _ZERO_COSTS):
+    provider = _provider()
+    compiled = compile_spec(spec, provider)
+    horizons = sorted({20, spec.horizon_days})
+    return BacktestHarness(
         provider,
-        {"costs": _ZERO_COSTS, "horizons_days": [20], "order_shares": 1_000},
+        {"costs": costs, "horizons_days": horizons, "order_shares": 1_000},
     ).run(compiled, date(2016, 6, 1), date(2019, 12, 31))
-    return result
+
+
+def _run():
+    return _run_spec(_spread_spec())
+
+
+def _leg_mean(result, leg: str, horizon: int) -> float:
+    vals = [
+        s.forward_returns[horizon]
+        for s in result.signals
+        if s.direction == leg and horizon in s.forward_returns
+    ]
+    assert vals, f"no {leg} signals with a {horizon}d return"
+    return sum(vals) / len(vals)
 
 
 def test_cross_sectional_spread_is_positive() -> None:
@@ -124,3 +175,33 @@ def test_long_only_guard_still_blocks_non_long_per_name_specs() -> None:
         raise AssertionError("expected long-only guard to reject a per-name short spec")
     except ValueError as exc:
         assert "borrow" in str(exc)
+
+
+def test_production_config_h60_recovers_spread() -> None:
+    # Regression guard: the production config rebalances ~monthly even for a 60-day
+    # hold. Before the event-alignment fix this dropped/staled most announcements and
+    # the spread collapsed; now the injected drift must come back clearly positive.
+    result = _run_spec(_spread_spec_production(60))
+    assert result.mean_return_by_horizon[60] > 0.01
+    assert _leg_mean(result, "long", 60) > 0
+    assert _leg_mean(result, "short", 60) > 0  # short leg's down-drift, sign-flipped
+
+
+def test_monthly_cadence_is_independent_of_hold_horizon() -> None:
+    # A 20-day and a 60-day hold rebalance on the SAME monthly cadence, so they form
+    # roughly the same number of dollar-neutral cohorts (one signal date per
+    # rebalance). The old code, tying cadence to the hold, gave the 60-day hold ~1/3
+    # as many formations as the 20-day hold.
+    dates_20 = {s.signal_date for s in _run_spec(_spread_spec_production(20)).signals}
+    dates_60 = {s.signal_date for s in _run_spec(_spread_spec_production(60)).signals}
+    assert len(dates_20) > 30  # ~monthly over 3.5 years
+    assert abs(len(dates_20) - len(dates_60)) <= 2
+
+
+def test_borrow_cost_charges_only_the_short_leg() -> None:
+    spec = _spread_spec_production(20)
+    base = _run_spec(spec, _ZERO_COSTS)
+    # 50%/yr borrow over a 20-session hold is a ~50% * 20/252 ~ 3.97% drag per short.
+    charged = _run_spec(spec, {**_ZERO_COSTS, "borrow": {"base_annual_bps": 5000.0}})
+    assert _leg_mean(charged, "short", 20) < _leg_mean(base, "short", 20) - 0.02
+    assert abs(_leg_mean(charged, "long", 20) - _leg_mean(base, "long", 20)) < 1e-9

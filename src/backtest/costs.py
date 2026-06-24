@@ -52,6 +52,32 @@ def round_trip_cost(
     return 2.0 * (half_spread_bps + impact_bps) / 10_000.0 + (2.0 * one_way_commission / notional)
 
 
+def short_borrow_return(horizon_days: int, config: dict, hard_to_borrow: bool = False) -> float:
+    """Stock-loan (borrow) cost of holding a short leg for ``horizon_days`` sessions.
+
+    Returned in return terms as a positive number to be SUBTRACTED from the short
+    leg's return: ``annual_rate * horizon_days / 252``. This is a flat tiered
+    placeholder until a per-name/date loan-fee feed lands — an easy-to-borrow base
+    rate, or a hard-to-borrow tier when the name is flagged point-in-time (see
+    ``BacktestHarness._is_hard_to_borrow``). The reserved ``loan_fee_curve`` slot
+    will later replace the tiers with empirical per-name fees, mirroring how
+    ``taq_curve`` replaces the parametric slippage model.
+    """
+    if isinstance(horizon_days, bool) or not isinstance(horizon_days, int) or horizon_days < 0:
+        raise ValueError("horizon_days must be a non-negative int")
+    borrow = config.get("borrow", {})
+    if not isinstance(borrow, Mapping):
+        raise ValueError("borrow config must be a mapping")
+    if borrow.get("loan_fee_curve") is not None:
+        raise NotImplementedError(
+            "empirical loan_fee_curve is not yet supported; leave it null to use the "
+            "parametric base/hard-to-borrow tiers"
+        )
+    key = "hard_to_borrow_annual_bps" if hard_to_borrow else "base_annual_bps"
+    annual_bps = _nonnegative_finite(borrow.get(key, 0.0), f"borrow.{key}")
+    return annual_bps / 10_000.0 * (horizon_days / 252.0)
+
+
 def entry_price_with_impact(
     price: float,
     order_shares: float,

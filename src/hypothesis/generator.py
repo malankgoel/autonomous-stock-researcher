@@ -109,7 +109,7 @@ def _spread_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
                         id=f"gen_spread_{feature}_q{nq}_h{h}",
                         description=(
                             f"Long top / short bottom {feature} quantile (q{nq}), "
-                            f"hold {h}d, rebalance {h}d"
+                            f"hold {h}d, rebalance ~monthly"
                         ),
                         source="llm",
                         tier=1,
@@ -126,8 +126,17 @@ def _spread_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
                             "n_quantiles": nq,
                             "long_quantile": "top",
                             "short_quantile": "bottom",
-                            "formation_window_days": 25,
-                            "rebalance_days": h,
+                            # Rebalance cadence is DECOUPLED from the hold horizon and
+                            # fixed ~monthly: the cadence bounds how stale a freshly
+                            # announced name can be before it enters, so it must track
+                            # the earnings calendar, not how long we hold. Tying it to
+                            # h (the old default) made a 60-day hold rebalance every 60
+                            # days and skip most announcements; the harness now tiles
+                            # the event stream by the inter-rebalance interval so every
+                            # announcement is ranked exactly once. The window only
+                            # bounds the first bucket's lookback.
+                            "formation_window_days": 35,
+                            "rebalance_days": 21,
                         },
                     )
                 )

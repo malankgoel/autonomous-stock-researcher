@@ -153,6 +153,12 @@ Cross-sectional long-short spread shape:
   {{"feature": ranking feature also in features, "n_quantiles": int >= 2,
     "long_quantile": "top" or "bottom", "short_quantile": the opposite,
     "formation_window_days": int >= 1, "rebalance_days": int >= 1}}
+- rebalance_days is the FORMATION CADENCE (how often you re-rank and enter freshly
+  announced names), NOT the hold length. Set it to the event calendar, e.g. ~21 for
+  monthly, regardless of horizon_days. Setting rebalance_days to the hold horizon
+  enters names long after the post-announcement drift and is a known failure mode.
+- keep formation_window_days >= rebalance_days so no announcement is skipped.
+- the hold length is horizon_days / exit_rule, independent of rebalance_days.
 
 Event features suescore and earnings_surprise_pct are sparse and cheap. Persistent
 fundamental features signal the whole universe daily and are expensive. Prefer

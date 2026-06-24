@@ -23,3 +23,13 @@ slippage:
 # Reserved slot for the empirical TAQ-informed curve. Leave null until TAQ data
 # arrives; costs.py must fall back to the parametric model above when null.
 taq_curve: null
+
+# Short-leg borrow (stock-loan) cost. Charged ONLY on the short legs of a spread,
+# prorated over the holding horizon: annual_bps * horizon_days / 252. Flat tiered
+# placeholder until a per-name/date loan-fee feed (Markit/IHS, or derived from the
+# comp_shortint short-interest panel already ingested) wires the hard-to-borrow flag
+# and, eventually, the loan_fee_curve. Longs are unaffected.
+borrow:
+  base_annual_bps: 50.0              # ~0.5%/yr general collateral (easy to borrow)
+  hard_to_borrow_annual_bps: 1500.0  # ~15%/yr tier for flagged hard-to-borrow names
+  loan_fee_curve: null               # reserved slot for empirical per-name/date fees

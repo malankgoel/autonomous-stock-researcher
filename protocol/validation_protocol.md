@@ -1,9 +1,11 @@
-# Validation Protocol (FINAL DRAFT — NOT YET REGISTERED)
+# Validation Protocol (REGISTERED)
 
-OWNER: Phase 1, Agent F. STATUS: statistical decisions finalized; register by
-committing this file BEFORE any real data is seen. Pre-registering the success bar
-is the discipline that makes every downstream result meaningful. Once committed,
-this file is append-only: no editing the bar after seeing results.
+OWNER: Phase 1, Agent F. STATUS: REGISTERED — committed 2026-06-20 (commit e81434b,
+"docs: preregister the validation protocol") BEFORE any real WRDS data was loaded.
+Pre-registering the success bar is the discipline that makes every downstream result
+meaningful. This file is now append-only: the success bar and statistical decisions
+above the addendum are frozen and must not be edited after seeing results. Later
+clarifications that do not change the bar are recorded, dated, in the addendum.
 
 The machine-readable parameters live in `config/validation.yaml`; this document is
 the human-readable rationale and the binding commitment.
@@ -73,3 +75,34 @@ with correct sign and plausible post-cost magnitude:
 
 If the harness cannot reproduce known results, it is broken and nothing downstream
 is trustworthy.
+
+## Append-only addendum
+
+Clarifications recorded after registration. None change the success bar, the
+significance test, the trial-counting rule, or the holdout discipline above; they
+only pin down how already-registered terms are computed for cross-sectional spreads.
+
+### 2026-06-24 — cross-sectional spread construction and short-leg borrow
+
+- **Reproduction gate, status.** On real CRSP/Compustat/IBES data the harness
+  recovers post-earnings drift with the correct positive sign (gross +0.66% at 20d
+  for the price-surprise seed, +0.54% for the SUE seed). The long-only drift is then
+  eaten by costs, as expected; the surviving alpha is the cross-sectional top-minus-
+  bottom SUE decile spread (gross ~+3.88%/rebalance, t~6.6; net positive and
+  significant even under a stressed 15%/yr borrow). The gate is met.
+- **Spread cohort formation.** A cross-sectional spec ranks names by its event
+  feature and forms a dollar-neutral long-short spread. Formation is event-aligned:
+  at each rebalance the names whose qualifying event landed since the previous
+  rebalance are ranked and entered, so every announcement is used exactly once and
+  the rebalance cadence (the entry-latency bound) is independent of the hold horizon.
+  All legs from one rebalance share a signal date, so they net into a single cohort
+  return under the already-registered cohort rule ("signals sharing a signal date are
+  equal-weighted into one cohort return; cohorts selected chronologically without
+  overlapping holding intervals"). This is a construction detail of the registered
+  "sector-relative return, net of modeled costs" metric, not a change to it.
+- **Borrow is part of "modeled costs."** The registered metric is net of modeled
+  costs. For a spread, modeled costs now include a stock-loan (borrow) fee on the
+  SHORT leg, prorated over the hold (config/costs.yaml `borrow`). It is a flat tiered
+  parametric placeholder, exactly as the slippage model is a pre-TAQ placeholder, with
+  a reserved `loan_fee_curve` slot for an empirical per-name/date feed. Charging
+  borrow makes the bar harder to clear, never easier.

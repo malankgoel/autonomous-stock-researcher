@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from backtest.costs import short_borrow_return
 from backtest.execution import EntryFill, ExitFill, resolve_entry, resolve_exit
 from backtest.labels import BacktestResult, SignalResult
 from data.interface import DataProvider
@@ -41,6 +42,7 @@ class _FrozenSignal:
     fill: EntryFill
     sector: str | None
     direction: str  # this leg's direction: "long" or "short"
+    hard_to_borrow: bool = False  # short legs only; drives the borrow-cost tier
 
 
 class BacktestHarness:
@@ -191,7 +193,28 @@ class BacktestHarness:
     def _cross_sectional_phase1(
         self, compiled, sessions, universe, end, progress, seen_universe
     ) -> list[_FrozenSignal]:
-        """Cross-sectional flow: at each rebalance, rank names and form long+short legs."""
+        """Cross-sectional flow: event-aligned long-short spread formation.
+
+        At each rebalance the names whose latest qualifying event landed in the
+        interval SINCE THE PREVIOUS REBALANCE are ranked by ``feature`` and split
+        into long/short legs (entered next_open, held ``horizon_days``). Tiling the
+        event stream by the inter-rebalance interval means every announcement is used
+        exactly once and entered at the FIRST rebalance after it. Two consequences
+        matter:
+
+          * No announcement is dropped. The old code ranked the most recent event in
+            a fixed ``formation_window_days`` lookback on a grid stepped by the HOLD
+            horizon, so a 60-day hold with a 25-day window skipped ~35 of every 60
+            days of earnings and entered names up to ~60 days stale — long after the
+            post-earnings drift had elapsed. The cadence is now decoupled from the
+            hold: a 60-day hold rebalances on the same ~monthly cadence as a 20-day
+            hold, capturing the same fresh-announcement decile spread the diagnostic
+            measures (see scripts/diagnostics/sue_longshort_net.py).
+          * Entry latency is bounded by the rebalance cadence, not the hold horizon.
+
+        All legs in one rebalance share a signal date, so the survival filter nets
+        them into a single dollar-neutral cohort return (the registered cohort rule).
+        """
         cs = compiled["cross_sectional"]
         feature = cs["feature"]
         nq = int(cs["n_quantiles"])
@@ -203,18 +226,30 @@ class BacktestHarness:
 
         frozen: list[_FrozenSignal] = []
         n_sessions = len(sessions)
+        prev_date: date | None = None
         for step in range(0, n_sessions, rebalance):
             signal_date = sessions[step]
             if progress is not None:
                 progress("forming portfolios", min(step + rebalance, n_sessions), n_sessions)
             universe_as_of = self._universe_as_of(signal_date, entry_timing)
             if universe_as_of is None:
+                prev_date = signal_date
                 continue
             tickers = sorted(universe.universe(universe_as_of))
             seen_universe.update(tickers)
+            # Formation interval: events strictly after the previous rebalance, up to
+            # this one (so each announcement is ranked exactly once, at the earliest
+            # rebalance after it). The first bucket of a run looks back the configured
+            # ``formation_window_days`` since there is no prior rebalance to bound it.
+            form_start = (
+                signal_date - timedelta(days=window)
+                if prev_date is None
+                else prev_date + timedelta(days=1)
+            )
+            prev_date = signal_date
             if len(tickers) < nq:
                 continue
-            values = self._ranking_values(tickers, feature, signal_date, window)
+            values = self._ranking_values(tickers, feature, form_start, signal_date)
             ranked = sorted(
                 ((t, v) for t, v in values.items() if v is not None and math.isfinite(v)),
                 key=lambda kv: kv[1],
@@ -249,15 +284,14 @@ class BacktestHarness:
         return frozen
 
     def _ranking_values(
-        self, tickers: list[str], feature: str, signal_date: date, window: int
+        self, tickers: list[str], feature: str, start: date, signal_date: date
     ) -> dict[str, float]:
-        """Latest point-in-time value of ``feature`` per name within the formation window.
+        """Latest point-in-time value of ``feature`` per name in (``start``, ``signal_date``].
 
         Event features (e.g. suescore) are non-null only on their event date, so we
-        take the most recent event value within [signal_date - window, signal_date].
-        Persistent features (price/fundamental) fall back to the as-of row.
+        take the most recent event value within the formation interval. Persistent
+        features (price/fundamental) fall back to the as-of row.
         """
-        start = signal_date - timedelta(days=window)
         events = self.provider.get_events(tickers, start, signal_date, as_of=signal_date)
         if not events.empty and feature in events.columns:
             ev = events.dropna(subset=[feature])
@@ -312,7 +346,30 @@ class BacktestHarness:
             fill=fill,
             sector=str(sector) if (sector is not None and pd.notna(sector)) else None,
             direction=direction,
+            hard_to_borrow=(direction == "short" and self._is_hard_to_borrow(row)),
         )
+
+    @staticmethod
+    def _is_hard_to_borrow(row: dict[str, Any] | None) -> bool:
+        """Per-name hard-to-borrow classification for short-leg borrow cost.
+
+        Hook for a point-in-time short-interest / stock-loan feed (see the ``borrow``
+        block in config/costs.yaml). Until that panel is wired, names default to
+        general collateral (easy to borrow). When the formation row already carries a
+        boolean ``hard_to_borrow`` flag or a ``short_interest_ratio`` feature, it is
+        honored, so the borrow tier becomes genuinely per-name the moment the data
+        provider exposes it — no harness change required.
+        """
+        if not row:
+            return False
+        flag = row.get("hard_to_borrow")
+        if isinstance(flag, bool):
+            return flag
+        ratio = row.get("short_interest_ratio")
+        try:
+            return float(ratio) >= 0.20  # >=20% of float sold short ~ hard to borrow
+        except (TypeError, ValueError):
+            return False
 
     def _label_signal(
         self, frozen: _FrozenSignal, compiled: CompiledHypothesis, end: date
@@ -343,7 +400,7 @@ class BacktestHarness:
         if exit_fill is None:
             return None
 
-        forward = self._forward_returns(fill, exit_fill, path, direction)
+        forward = self._forward_returns(fill, exit_fill, path, direction, frozen.hard_to_borrow)
         sector_relative: dict[int, float] = {}
         smallcap_relative: dict[int, float] = {}
         market_relative: dict[int, float] = {}
@@ -385,6 +442,7 @@ class BacktestHarness:
         exit_fill: ExitFill,
         path: pd.DataFrame,
         direction: str,
+        hard_to_borrow: bool = False,
     ) -> dict[int, float]:
         entry_indices = path.index[path["date"] == fill.entry_date].tolist()
         if not entry_indices:
@@ -404,9 +462,15 @@ class BacktestHarness:
             if not math.isfinite(exit_price) or exit_price <= 0.0:
                 continue
             gross = exit_price / fill.market_price - 1.0
+            net = gross - fill.cost_return
             if direction == "short":
-                gross = -gross
-            values[horizon] = gross - fill.cost_return
+                # Sign-flip P&L, then pay the stock-loan fee accrued over the hold.
+                net = (
+                    -gross
+                    - fill.cost_return
+                    - short_borrow_return(horizon, self.cost_config, hard_to_borrow)
+                )
+            values[horizon] = net
         return values
 
     def _relative_returns(

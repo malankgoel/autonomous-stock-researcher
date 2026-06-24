@@ -6,7 +6,31 @@ from backtest.costs import (
     ParticipationLimitError,
     maximum_fill_shares,
     round_trip_cost,
+    short_borrow_return,
 )
+
+
+def test_short_borrow_return_prorates_annual_rate_over_the_hold() -> None:
+    config = {"borrow": {"base_annual_bps": 50.0, "hard_to_borrow_annual_bps": 1500.0}}
+    assert short_borrow_return(252, config) == pytest.approx(0.0050)
+    assert short_borrow_return(20, config) == pytest.approx(0.0050 * 20 / 252)
+    # Hard-to-borrow names pay the higher tier; a zero hold costs nothing.
+    assert short_borrow_return(20, config, hard_to_borrow=True) == pytest.approx(0.15 * 20 / 252)
+    assert short_borrow_return(0, config) == 0.0
+
+
+def test_short_borrow_return_defaults_to_zero_without_a_borrow_block() -> None:
+    assert short_borrow_return(60, {}) == 0.0
+
+
+def test_short_borrow_return_rejects_unfinished_loan_fee_curve() -> None:
+    with pytest.raises(NotImplementedError):
+        short_borrow_return(20, {"borrow": {"loan_fee_curve": [{"x": 1}]}})
+
+
+def test_short_borrow_return_rejects_bad_horizon() -> None:
+    with pytest.raises(ValueError):
+        short_borrow_return(-1, {"borrow": {"base_annual_bps": 50.0}})
 
 
 @pytest.fixture
