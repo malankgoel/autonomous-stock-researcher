@@ -31,6 +31,7 @@ _COMPILED_KEYS = frozenset(
         "exit_rule",
         "universe_filter",
         "features",
+        "cross_sectional",
     }
 )
 
@@ -39,6 +40,7 @@ _COMPILED_KEYS = frozenset(
 class _FrozenSignal:
     fill: EntryFill
     sector: str | None
+    direction: str  # this leg's direction: "long" or "short"
 
 
 class BacktestHarness:
@@ -91,7 +93,11 @@ class BacktestHarness:
         self._validate_compiled(compiled)
         if start > end:
             raise ValueError("start must be on or before end")
-        if compiled["direction"] != "long":
+        is_cross_sectional = compiled.get("cross_sectional") is not None
+        # Long-only guard applies to per-name specs. A cross-sectional spec is a
+        # dollar-neutral spread that builds its own long and short legs internally,
+        # each routed through the same point-in-time fill/label machinery.
+        if not is_cross_sectional and compiled["direction"] != "long":
             raise ValueError("only long hypotheses are executable until borrow is modeled")
         # Signals are generated within [start, end]; labels may read forward to
         # label_end (>= end), so a year-by-year run is identical to one big run.
@@ -106,58 +112,17 @@ class BacktestHarness:
         universe_config.setdefault("sector", "any")
         universe = UniverseConstructor(self.provider, universe_config)
 
-        frozen: list[_FrozenSignal] = []
         seen_universe: set[str] = set()
 
         # PHASE 1: all reads are cut off at the signal or fill date.
-        n_sessions = len(sessions)
-        for step, signal_date in enumerate(sessions):
-            if progress is not None and (step % 20 == 0 or step == n_sessions - 1):
-                progress("scanning sessions", step + 1, n_sessions)
-            universe_as_of = self._universe_as_of(signal_date, compiled["entry_timing"])
-            if universe_as_of is None:
-                continue
-            tickers = sorted(universe.universe(universe_as_of))
-            seen_universe.update(tickers)
-            if not tickers:
-                continue
-            features = self._feature_rows(tickers, signal_date)
-            for ticker in tickers:
-                row = features.get(ticker)
-                if row is None or not matches_entry_condition(compiled, row):
-                    continue
-                entry_date = self._entry_date(signal_date, compiled["entry_timing"], sessions)
-                if entry_date is None or entry_date > end:
-                    continue
-                if entry_date == signal_date:
-                    entry_row = row
-                else:
-                    entry_prices = self.provider.get_prices(
-                        [ticker], entry_date, entry_date, as_of=entry_date
-                    )
-                    if entry_prices.empty:
-                        continue
-                    entry_row = entry_prices.iloc[-1].to_dict()
-                try:
-                    fill = resolve_entry(
-                        ticker=ticker,
-                        signal_date=signal_date,
-                        entry_timing=compiled["entry_timing"],
-                        sessions=sessions,
-                        entry_row=entry_row,
-                        desired_shares=self.desired_shares,
-                        cost_config=self.cost_config,
-                        direction=compiled["direction"],
-                    )
-                except ValueError:
-                    # Missing/bad price or ADV makes the name unfillable, not a signal
-                    # with manufactured execution assumptions.
-                    continue
-                if fill is not None:
-                    sector = row.get("sector")
-                    frozen.append(
-                        _FrozenSignal(fill=fill, sector=str(sector) if pd.notna(sector) else None)
-                    )
+        if is_cross_sectional:
+            frozen = self._cross_sectional_phase1(
+                compiled, sessions, universe, end, progress, seen_universe
+            )
+        else:
+            frozen = self._per_name_phase1(
+                compiled, sessions, universe, end, progress, seen_universe
+            )
 
         # PHASE 2: future reads start only after every signal and fill is immutable.
         n_frozen = len(frozen)
@@ -193,6 +158,162 @@ class BacktestHarness:
             rows.setdefault(ticker, {"ticker": ticker}).update(event.to_dict())
         return rows
 
+    def _per_name_phase1(
+        self, compiled, sessions, universe, end, progress, seen_universe
+    ) -> list[_FrozenSignal]:
+        """Per-name flow: emit one long signal per name matching the entry condition."""
+        frozen: list[_FrozenSignal] = []
+        entry_timing = compiled["entry_timing"]
+        direction = compiled["direction"]
+        n_sessions = len(sessions)
+        for step, signal_date in enumerate(sessions):
+            if progress is not None and (step % 20 == 0 or step == n_sessions - 1):
+                progress("scanning sessions", step + 1, n_sessions)
+            universe_as_of = self._universe_as_of(signal_date, entry_timing)
+            if universe_as_of is None:
+                continue
+            tickers = sorted(universe.universe(universe_as_of))
+            seen_universe.update(tickers)
+            if not tickers:
+                continue
+            features = self._feature_rows(tickers, signal_date)
+            for ticker in tickers:
+                row = features.get(ticker)
+                if row is None or not matches_entry_condition(compiled, row):
+                    continue
+                signal = self._make_frozen(
+                    ticker, signal_date, entry_timing, sessions, end, direction, row
+                )
+                if signal is not None:
+                    frozen.append(signal)
+        return frozen
+
+    def _cross_sectional_phase1(
+        self, compiled, sessions, universe, end, progress, seen_universe
+    ) -> list[_FrozenSignal]:
+        """Cross-sectional flow: at each rebalance, rank names and form long+short legs."""
+        cs = compiled["cross_sectional"]
+        feature = cs["feature"]
+        nq = int(cs["n_quantiles"])
+        long_top = cs["long_quantile"] == "top"
+        short_top = cs["short_quantile"] == "top"
+        window = int(cs["formation_window_days"])
+        rebalance = int(cs["rebalance_days"])
+        entry_timing = compiled["entry_timing"]
+
+        frozen: list[_FrozenSignal] = []
+        n_sessions = len(sessions)
+        for step in range(0, n_sessions, rebalance):
+            signal_date = sessions[step]
+            if progress is not None:
+                progress("forming portfolios", min(step + rebalance, n_sessions), n_sessions)
+            universe_as_of = self._universe_as_of(signal_date, entry_timing)
+            if universe_as_of is None:
+                continue
+            tickers = sorted(universe.universe(universe_as_of))
+            seen_universe.update(tickers)
+            if len(tickers) < nq:
+                continue
+            values = self._ranking_values(tickers, feature, signal_date, window)
+            ranked = sorted(
+                ((t, v) for t, v in values.items() if v is not None and math.isfinite(v)),
+                key=lambda kv: kv[1],
+            )
+            m = len(ranked)
+            if m < nq:
+                continue
+            long_names, short_names = [], []
+            for i, (ticker, _value) in enumerate(ranked):
+                bucket = min(int(i / m * nq), nq - 1)
+                in_top, in_bottom = bucket == nq - 1, bucket == 0
+                if (long_top and in_top) or (not long_top and in_bottom):
+                    long_names.append(ticker)
+                if (short_top and in_top) or (not short_top and in_bottom):
+                    short_names.append(ticker)
+            # one feature-row read for the selected names (sector + same-session entry)
+            selected = sorted(set(long_names) | set(short_names))
+            rows = self._feature_rows(selected, signal_date)
+            for leg_dir, names in (("long", long_names), ("short", short_names)):
+                for ticker in names:
+                    signal = self._make_frozen(
+                        ticker,
+                        signal_date,
+                        entry_timing,
+                        sessions,
+                        end,
+                        leg_dir,
+                        rows.get(ticker, {"ticker": ticker}),
+                    )
+                    if signal is not None:
+                        frozen.append(signal)
+        return frozen
+
+    def _ranking_values(
+        self, tickers: list[str], feature: str, signal_date: date, window: int
+    ) -> dict[str, float]:
+        """Latest point-in-time value of ``feature`` per name within the formation window.
+
+        Event features (e.g. suescore) are non-null only on their event date, so we
+        take the most recent event value within [signal_date - window, signal_date].
+        Persistent features (price/fundamental) fall back to the as-of row.
+        """
+        start = signal_date - timedelta(days=window)
+        events = self.provider.get_events(tickers, start, signal_date, as_of=signal_date)
+        if not events.empty and feature in events.columns:
+            ev = events.dropna(subset=[feature])
+            if "rdq" in ev.columns:
+                ev = ev.sort_values("rdq")  # latest wins via dict overwrite
+            out: dict[str, float] = {}
+            for _, r in ev.iterrows():
+                out[str(r["ticker"])] = float(r[feature])
+            return out
+        rows = self._feature_rows(tickers, signal_date)
+        out = {}
+        for ticker, row in rows.items():
+            value = row.get(feature)
+            if value is not None and pd.notna(value):
+                out[ticker] = float(value)
+        return out
+
+    def _make_frozen(
+        self, ticker, signal_date, entry_timing, sessions, end, direction, row
+    ) -> _FrozenSignal | None:
+        """Resolve one name into a frozen, point-in-time fill for the given direction."""
+        entry_date = self._entry_date(signal_date, entry_timing, sessions)
+        if entry_date is None or entry_date > end:
+            return None
+        if entry_date == signal_date:
+            entry_row = row
+        else:
+            entry_prices = self.provider.get_prices(
+                [ticker], entry_date, entry_date, as_of=entry_date
+            )
+            if entry_prices.empty:
+                return None
+            entry_row = entry_prices.iloc[-1].to_dict()
+        try:
+            fill = resolve_entry(
+                ticker=ticker,
+                signal_date=signal_date,
+                entry_timing=entry_timing,
+                sessions=sessions,
+                entry_row=entry_row,
+                desired_shares=self.desired_shares,
+                cost_config=self.cost_config,
+                direction=direction,
+            )
+        except ValueError:
+            # Missing/bad price or ADV makes the name unfillable, not a manufactured signal.
+            return None
+        if fill is None:
+            return None
+        sector = row.get("sector") if row else None
+        return _FrozenSignal(
+            fill=fill,
+            sector=str(sector) if (sector is not None and pd.notna(sector)) else None,
+            direction=direction,
+        )
+
     def _label_signal(
         self, frozen: _FrozenSignal, compiled: CompiledHypothesis, end: date
     ) -> SignalResult | None:
@@ -209,19 +330,20 @@ class BacktestHarness:
         if prices.empty:
             return None
         path = prices.sort_values("date").reset_index(drop=True)
+        direction = frozen.direction  # this leg's direction (long or short)
         invalidation_dates = self._invalidation_dates(path, compiled["exit_rule"])
         exit_fill = resolve_exit(
             fill,
             path,
             compiled["exit_rule"],
             compiled["horizon_days"],
-            compiled["direction"],
+            direction,
             invalidation_dates,
         )
         if exit_fill is None:
             return None
 
-        forward = self._forward_returns(fill, exit_fill, path, compiled["direction"])
+        forward = self._forward_returns(fill, exit_fill, path, direction)
         sector_relative: dict[int, float] = {}
         smallcap_relative: dict[int, float] = {}
         market_relative: dict[int, float] = {}
@@ -230,11 +352,13 @@ class BacktestHarness:
             sector_map = benchmarks.get("sector", {})
             if frozen.sector is not None and isinstance(sector_map, dict):
                 ticker = sector_map.get(frozen.sector)
-                sector_relative = self._relative_returns(forward, ticker, fill, end)
+                sector_relative = self._relative_returns(forward, ticker, fill, end, direction)
             smallcap_relative = self._relative_returns(
-                forward, benchmarks.get("smallcap"), fill, end
+                forward, benchmarks.get("smallcap"), fill, end, direction
             )
-            market_relative = self._relative_returns(forward, benchmarks.get("market"), fill, end)
+            market_relative = self._relative_returns(
+                forward, benchmarks.get("market"), fill, end, direction
+            )
 
         return SignalResult(
             spec_id=compiled["spec_id"],
@@ -242,7 +366,7 @@ class BacktestHarness:
             signal_date=fill.signal_date,
             entry_date=fill.entry_date,
             entry_price=fill.entry_price,
-            direction=compiled["direction"],
+            direction=direction,
             forward_returns=forward,
             sector_relative_returns=sector_relative,
             smallcap_relative_returns=smallcap_relative,
@@ -291,6 +415,7 @@ class BacktestHarness:
         benchmark_ticker: object,
         fill: EntryFill,
         end: date,
+        direction: str = "long",
     ) -> dict[int, float]:
         if not isinstance(benchmark_ticker, str) or not benchmark_ticker:
             return {}
@@ -310,12 +435,18 @@ class BacktestHarness:
         start_index = starts[0]
         entry_field = "open" if fill.entry_date > fill.signal_date else "close"
         start_price = float(path.iloc[start_index][entry_field])
+        # ``stock_return`` is already direction-adjusted (a short's P&L is sign-flipped).
+        # A long's benchmark-relative return subtracts the benchmark; a short's must ADD
+        # it back, since being short the name is effectively long the benchmark. Without
+        # this, the benchmark fails to cancel across a dollar-neutral spread's legs and
+        # injects a phantom ~-1x market drag into the spread.
+        sign = 1.0 if direction == "long" else -1.0
         relative: dict[int, float] = {}
         for horizon, stock_return in stock_returns.items():
             index = start_index + horizon
             if index < len(path):
                 benchmark_return = float(path.iloc[index]["close"]) / start_price - 1.0
-                relative[horizon] = stock_return - benchmark_return
+                relative[horizon] = stock_return - sign * benchmark_return
         return relative
 
     @staticmethod
