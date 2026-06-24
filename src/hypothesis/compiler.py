@@ -46,6 +46,7 @@ class CompiledHypothesis(TypedDict):
     exit_rule: dict
     universe_filter: dict
     features: tuple[str, ...]
+    cross_sectional: dict | None
 
 
 _SAME_SESSION_PRICE_FIELDS = frozenset(
@@ -80,16 +81,18 @@ def compile_spec(spec: HypothesisSpec, provider: DataProvider) -> CompiledHypoth
     if missing:
         raise CompileError(f"provider cannot resolve feature(s): {missing}")
 
-    _validate_predicates(spec.entry_condition)
-
-    condition_features = set(spec.entry_condition)
-    if spec.entry_timing in {"same_close", "friday_close"}:
-        unavailable_at_decision = sorted(condition_features & _SAME_SESSION_PRICE_FIELDS)
-        if unavailable_at_decision:
-            raise CompileError(
-                "same-session close entries cannot condition on fields known only "
-                f"during/after that session: {unavailable_at_decision}"
-            )
+    # Cross-sectional specs ignore the per-name entry_condition; the ranking feature
+    # is already proven resolvable via the features-availability check above.
+    if spec.cross_sectional is None:
+        _validate_predicates(spec.entry_condition)
+        condition_features = set(spec.entry_condition)
+        if spec.entry_timing in {"same_close", "friday_close"}:
+            unavailable_at_decision = sorted(condition_features & _SAME_SESSION_PRICE_FIELDS)
+            if unavailable_at_decision:
+                raise CompileError(
+                    "same-session close entries cannot condition on fields known only "
+                    f"during/after that session: {unavailable_at_decision}"
+                )
 
     return {
         "spec_id": spec.id,
@@ -104,6 +107,7 @@ def compile_spec(spec: HypothesisSpec, provider: DataProvider) -> CompiledHypoth
         "exit_rule": dict(spec.exit_rule),
         "universe_filter": dict(spec.universe_filter),
         "features": tuple(spec.features),
+        "cross_sectional": dict(spec.cross_sectional) if spec.cross_sectional else None,
     }
 
 

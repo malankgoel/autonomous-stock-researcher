@@ -68,6 +68,17 @@ class HypothesisSpec:
 
     features: list = field(default_factory=list)  # all must resolve point in time
 
+    # Optional cross-sectional long-short construction. When present, the spec is a
+    # dollar-neutral spread: at each rebalance the eligible names are ranked by
+    # ``feature`` into ``n_quantiles`` buckets; ``long_quantile`` is held long and
+    # ``short_quantile`` short. This is how the cross-sectional alpha (e.g. the PEAD
+    # decile spread) is expressed — the per-name ``entry_condition`` cannot. When set,
+    # ``direction`` must be NEUTRAL and ``entry_condition`` is ignored by the harness.
+    # Schema: {"feature": str, "n_quantiles": int>=2, "long_quantile": "top"|"bottom",
+    #          "short_quantile": "top"|"bottom", "formation_window_days": int>=1,
+    #          "rebalance_days": int>=1}
+    cross_sectional: dict | None = None
+
     def __post_init__(self) -> None:
         # Accept a string direction (e.g. from JSON) and coerce to the enum.
         if isinstance(self.direction, str):
@@ -153,6 +164,46 @@ def _validate_exit_rule(rule: dict) -> list[str]:
     return errors
 
 
+def _validate_cross_sectional(spec: "HypothesisSpec") -> list[str]:
+    """Validate a cross-sectional long-short construction.
+
+    The spec must be dollar-neutral (direction NEUTRAL), name a ranking feature that
+    is also declared in ``features``, choose opposite quantiles for the long and
+    short legs, and define positive integer quantile/window/rebalance counts.
+    """
+    errors: list[str] = []
+    cs = spec.cross_sectional
+    if not isinstance(cs, dict) or not cs:
+        return ["cross_sectional must be a non-empty dict"]
+
+    if not isinstance(spec.direction, Direction) or spec.direction is not Direction.NEUTRAL:
+        errors.append("cross_sectional specs must have direction 'neutral' (dollar-neutral spread)")
+
+    feature = cs.get("feature")
+    if not isinstance(feature, str) or not feature:
+        errors.append("cross_sectional['feature'] must be a non-empty string")
+    elif isinstance(spec.features, list) and feature not in spec.features:
+        errors.append(f"cross_sectional feature {feature!r} is not declared in features")
+
+    nq = cs.get("n_quantiles")
+    if not isinstance(nq, int) or isinstance(nq, bool) or nq < 2:
+        errors.append("cross_sectional['n_quantiles'] must be an int >= 2")
+
+    legs = {"top", "bottom"}
+    long_q, short_q = cs.get("long_quantile"), cs.get("short_quantile")
+    if long_q not in legs or short_q not in legs:
+        errors.append("cross_sectional long_quantile/short_quantile must be 'top' or 'bottom'")
+    elif long_q == short_q:
+        errors.append("cross_sectional long_quantile and short_quantile must differ")
+
+    for key in ("formation_window_days", "rebalance_days"):
+        v = cs.get(key)
+        if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+            errors.append(f"cross_sectional['{key}'] must be a positive int")
+
+    return errors
+
+
 def _is_finite_number(value: object) -> bool:
     return (
         not isinstance(value, bool)
@@ -205,7 +256,10 @@ def validate(spec: HypothesisSpec) -> None:
     elif not all(isinstance(f, str) and f for f in spec.features):
         errors.append("every feature must be a non-empty string")
 
-    errors.extend(_validate_entry_condition(spec.entry_condition))
+    if spec.cross_sectional is not None:
+        errors.extend(_validate_cross_sectional(spec))
+    else:
+        errors.extend(_validate_entry_condition(spec.entry_condition))
     errors.extend(_validate_exit_rule(spec.exit_rule))
 
     if (
@@ -220,7 +274,12 @@ def validate(spec: HypothesisSpec) -> None:
 
     # Cross-field: every field referenced by the entry condition must be declared
     # in features, so the compiler can guarantee point in time resolvability.
-    if isinstance(spec.entry_condition, dict) and isinstance(spec.features, list):
+    # (Skipped for cross-sectional specs, whose entry_condition is ignored.)
+    if (
+        spec.cross_sectional is None
+        and isinstance(spec.entry_condition, dict)
+        and isinstance(spec.features, list)
+    ):
         declared = set(spec.features)
         for feat in spec.entry_condition:
             if isinstance(feat, str) and feat not in declared:
