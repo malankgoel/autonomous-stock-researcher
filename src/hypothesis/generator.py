@@ -143,6 +143,61 @@ def _spread_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
     return out
 
 
+# Liquidity-floor sweep for the SUE cross-sectional spread (batch 2). The batch-1
+# spreads had the right shape but a gross top-minus-bottom edge (~0.1-0.2%/rebalance)
+# smaller than the ~0.46%/leg round-trip cost at the broad $1M-ADV universe. The
+# cheap decile diagnostic (scripts/diagnostics/sue_longshort_net.py) found a far
+# larger spread once a $5M+ ADV floor was imposed, so the open question is whether the
+# SUE spread concentrates in liquid names enough to clear cost there. Raising the
+# floor attacks both sides: it tends to raise the clean gross spread AND lowers
+# per-name slippage (impact scales with order size / ADV). Every variant below is a
+# new, honestly-counted trial; the holdout stays locked.
+_SPREAD_LIQUIDITY_FLOORS: tuple[tuple[int, str], ...] = (
+    (5_000_000, "5m"),
+    (10_000_000, "10m"),
+    (25_000_000, "25m"),
+)
+
+
+def _spread_liquidity_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
+    """SUE long-short spread re-tested across higher liquidity floors (batch 2)."""
+    feature = "suescore"
+    if feature not in available:
+        return []
+    out: list[HypothesisSpec] = []
+    for floor, flabel in _SPREAD_LIQUIDITY_FLOORS:
+        for nq in (5, 10):
+            for h in (20, 60):
+                out.append(
+                    HypothesisSpec(
+                        id=f"gen_spread_{feature}_q{nq}_h{h}_liq{flabel}",
+                        description=(
+                            f"Long top / short bottom {feature} quantile (q{nq}), hold "
+                            f"{h}d, rebalance ~monthly, min ADV ${floor:,}"
+                        ),
+                        source="llm",
+                        tier=1,
+                        generation_batch=batch,
+                        universe_filter={"min_dollar_volume": floor, "cap": "any"},
+                        entry_condition={},
+                        direction="neutral",
+                        horizon_days=h,
+                        entry_timing="next_open",
+                        exit_rule={"horizon": h},
+                        features=[feature],
+                        cross_sectional={
+                            "feature": feature,
+                            "n_quantiles": nq,
+                            "long_quantile": "top",
+                            "short_quantile": "bottom",
+                            "formation_window_days": 35,
+                            "rebalance_days": 21,
+                        },
+                    )
+                )
+    return out
+
+
 def _calendar_candidates(batch: str, available: set[str]) -> list[HypothesisSpec]:
     """Day-of-week calendar effects: enter next open after each weekday."""
     if "weekday" not in available:
@@ -229,6 +284,7 @@ def _fundamental_candidates(batch: str, available: set[str]) -> list[HypothesisS
 _PROPOSERS: dict[str, Callable[[str, set[str]], list[HypothesisSpec]]] = {
     "drift": _drift_candidates,
     "spread": _spread_candidates,
+    "spread_liq": _spread_liquidity_candidates,
     "fundamental": _fundamental_candidates,
     "calendar": _calendar_candidates,
     "llm": llm_candidates,
