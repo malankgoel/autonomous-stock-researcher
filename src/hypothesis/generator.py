@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from hypothesis.llm_generator import llm_candidates
+from hypothesis.llm_generator import llm_candidates, llm_tier2_candidates
 from hypothesis.spec import HypothesisSpec, validate
 
 # Day names as the data layer encodes the ``weekday`` feature (see the seed
@@ -288,6 +288,7 @@ _PROPOSERS: dict[str, Callable[[str, set[str]], list[HypothesisSpec]]] = {
     "fundamental": _fundamental_candidates,
     "calendar": _calendar_candidates,
     "llm": llm_candidates,
+    "llm_tier2": llm_tier2_candidates,
 }
 
 # Families that signal the ENTIRE liquid universe on most sessions, because their
