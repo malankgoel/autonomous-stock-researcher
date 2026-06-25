@@ -34,10 +34,12 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from backtest.harness import BacktestHarness  # noqa: E402
+from data.text_feature_provider import Tier2FeatureStore, TextFeatureProvider  # noqa: E402
 from data.wrds_provider import WrdsDataProvider  # noqa: E402
 from hypothesis.compiler import CompileError, compile_spec  # noqa: E402
 from hypothesis.generator import _UNIVERSE_WIDE_FAMILIES, generate  # noqa: E402
 from validation.survival import deflated_sharpe  # noqa: E402
+from validation.trial_ledger import prior_trial_sharpes  # noqa: E402
 from validation.walkforward import walk_forward  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,9 +127,12 @@ def summarize(summaries, n_planned, batch, sy, ey, config, complete, out_name="s
     """
     bar = 1 - 0.05
     trials = [s["result"] for s in summaries.values()]
+    # Pool distinct hypotheses from every PRIOR batch so the multiple-testing
+    # correction counts every test ever run, not just this batch's specs.
+    prior = prior_trial_sharpes(CKPT, batch, set(summaries.keys()))
     rows = []
     for spec_id, s in summaries.items():
-        dsr = deflated_sharpe(s["result"], trials, config)
+        dsr = deflated_sharpe(s["result"], trials, config, prior_trial_sharpes=prior)
         rows.append((spec_id, s["n_cohorts"], s["mean_return"], s["sharpe"], dsr))
     rows.sort(key=lambda r: r[4], reverse=True)
     survivors = [r[0] for r in rows if r[4] > bar]
@@ -142,7 +147,9 @@ def summarize(summaries, n_planned, batch, sy, ey, config, complete, out_name="s
                 "complete": complete,
                 "n_specs_done": len(rows),
                 "n_specs_planned": n_planned,
-                "n_trials_counted": len(trials),
+                "n_trials_counted": len(trials) + int(prior.size),
+                "n_trials_this_batch": len(trials),
+                "n_trials_prior_batches": int(prior.size),
                 "bar_dsr": bar,
                 "survivors": survivors,
                 "results": [
@@ -168,6 +175,14 @@ def main() -> int:
     if "--limit" in args:
         i = args.index("--limit")
         limit = int(args[i + 1])
+        del args[i : i + 2]
+    # --tier2 PATH: wrap the provider with the Tier-2 feature store so the combined
+    # Tier-1 ∪ Tier-2 catalog is advertised, and default to the Tier-2 LLM proposer.
+    # Tier-2 batches count as trials in the SAME ledger (CKPT dir) — no lenient bar.
+    tier2_path = None
+    if "--tier2" in args:
+        i = args.index("--tier2")
+        tier2_path = args[i + 1]
         del args[i : i + 2]
     families = None  # generator default: the selective event-conditioned drift family
     if "--families" in args:
@@ -199,15 +214,24 @@ def main() -> int:
     ey = int(nums[1]) if len(nums) > 1 else 2019
 
     print(f"loading provider {sy}-{ey} (with benchmarks)...")
-    provider = WrdsDataProvider(str(ROOT / "data" / "processed"), start_year=sy - 1, end_year=ey)
-    if not provider.benchmarks_config().get("sector"):
+    base = WrdsDataProvider(str(ROOT / "data" / "processed"), start_year=sy - 1, end_year=ey)
+    if not base.benchmarks_config().get("sector"):
         print("!! no sector benchmarks loaded — run scripts/04_build_benchmarks.py first.")
         return 1
 
     import pandas as pd
 
-    label_end = pd.Timestamp(max(provider._sessions)).date()
-    config = build_config(provider)
+    label_end = pd.Timestamp(max(base._sessions)).date()
+    config = build_config(base)
+    # Tier-2: compose the text-feature store over the Tier-1 provider so one object
+    # exposes the unified catalog. Default the proposer to the Tier-2 family.
+    provider = base
+    if tier2_path is not None:
+        provider = TextFeatureProvider(base, Tier2FeatureStore(tier2_path))
+        n_tier2 = len(provider.tier2_features())
+        print(f"  Tier-2 enabled: {n_tier2} text feature(s) from {tier2_path}")
+        if families is None:
+            families = ["llm_tier2"]
     harness = BacktestHarness(provider, config)
 
     # --- generate + compile the batch -------------------------------------
@@ -216,6 +240,13 @@ def main() -> int:
         n=limit,
         generation_batch=batch,
         families=families,
+    )
+    # Persist the exact proposed specs for audit and for the Tier-2 ablation step
+    # (scripts/09_ablation.py rebuilds each Tier-2 spec's Tier-1 ablation from here).
+    specs_dir = CKPT / batch
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    (specs_dir / "specs.json").write_text(
+        json.dumps([s.to_dict() for s in specs], indent=2), encoding="utf-8"
     )
     compiled = []
     for spec in specs:
@@ -259,8 +290,11 @@ def main() -> int:
 
     # --- final survival filter over this run's specs --------------------------
     scope = f"shard {shard_i}/{shard_n}" if shard_n > 1 else "full batch"
+    n_prior = int(prior_trial_sharpes(CKPT, batch, set(summaries.keys())).size)
+    n_counted = len(summaries) + n_prior
     print(
-        f"\n=== SURVIVAL FILTER (batch '{batch}', {sy}-{ey}, {scope}, {len(summaries)} trials) ==="
+        f"\n=== SURVIVAL FILTER (batch '{batch}', {sy}-{ey}, {scope}, "
+        f"{n_counted} trials counted: {len(summaries)} this batch + {n_prior} prior) ==="
     )
     print(f"  {'spec':<34}{'cohorts':>8}{'mean sec-rel':>14}{'Sharpe':>9}{'DSR':>8}  verdict")
     for spec_id, n_c, mr, shp, dsr in rows:

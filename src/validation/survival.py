@@ -60,11 +60,19 @@ def deflated_sharpe(
     result: BacktestResult,
     all_trial_results: list[BacktestResult],
     config: dict,
+    *,
+    prior_trial_sharpes: Iterable[float] | None = None,
 ) -> float:
     """Return the registered Bailey--Lopez de Prado DSR probability.
 
     Undefined trial Sharpes are represented by zero when estimating the null
     maximum.  They still count in ``N``, as required by the protocol.
+
+    ``prior_trial_sharpes`` pools the Sharpes of distinct hypotheses tried in earlier
+    batches (see :mod:`validation.trial_ledger`). They are appended to the live
+    trials so ``N`` and the Sharpe dispersion reflect *every* test ever run, not just
+    the current batch — the project's "count every test" rule. When omitted, the
+    correction counts only ``all_trial_results`` (unchanged legacy behaviour).
     """
     if not all_trial_results:
         raise ValueError("all_trial_results must contain every attempted trial")
@@ -82,10 +90,14 @@ def deflated_sharpe(
         return 0.0
     sharpe = float(np.mean(returns) / standard_deviation)
 
-    trial_sharpes = np.asarray(
-        [raw_sharpe(trial, horizon) for trial in all_trial_results], dtype=float
-    )
-    trial_count = len(all_trial_results)
+    live_sharpes = [raw_sharpe(trial, horizon) for trial in all_trial_results]
+    if prior_trial_sharpes is not None:
+        extra = [
+            float(value) if math.isfinite(float(value)) else 0.0 for value in prior_trial_sharpes
+        ]
+        live_sharpes = live_sharpes + extra
+    trial_sharpes = np.asarray(live_sharpes, dtype=float)
+    trial_count = trial_sharpes.size
     if trial_count == 1:
         expected_maximum = 0.0
     else:

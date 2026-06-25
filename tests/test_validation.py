@@ -85,6 +85,23 @@ def test_dsr_counts_failed_trials_in_expected_maximum():
     assert with_every_trial != without_failed
 
 
+def test_prior_trial_sharpes_lower_dsr_by_raising_the_null_maximum():
+    candidate = _result("candidate", [0.01, 0.02, 0.03, 0.04])
+    alone = deflated_sharpe(candidate, [candidate], CONFIG)
+    # Pooling high-Sharpe hypotheses tried in earlier batches inflates the expected
+    # maximum and the trial count, so the same candidate must clear a higher bar.
+    pooled = deflated_sharpe(candidate, [candidate], CONFIG, prior_trial_sharpes=[5.0, 6.0, 7.0])
+    assert pooled < alone
+
+
+def test_prior_trial_sharpes_none_is_legacy_behaviour():
+    candidate = _result("candidate", [0.01, 0.02, 0.03, 0.04])
+    other = _result("other", [0.02, 0.01, 0.04, 0.03])
+    assert deflated_sharpe(
+        candidate, [candidate, other], CONFIG, prior_trial_sharpes=None
+    ) == deflated_sharpe(candidate, [candidate, other], CONFIG)
+
+
 def test_benjamini_hochberg_known_step_up_result():
     # Sorted thresholds at alpha=.05 are .0125, .025, .0375, .05.
     assert benjamini_hochberg([0.01, 0.04, 0.02, 0.20], 0.05).tolist() == [

@@ -49,11 +49,13 @@ from hypothesis.generator import generate  # noqa: E402
 from hypothesis.spec import HypothesisSpec  # noqa: E402
 from validation.holdout import HoldoutExhaustedError, HoldoutManager  # noqa: E402
 from validation.survival import cohort_returns, deflated_sharpe  # noqa: E402
+from validation.trial_ledger import prior_trial_sharpes  # noqa: E402
 from validation.walkforward import walk_forward  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
 CKPT = ROOT / "data" / "processed" / "validate"
+GENERATE_DIR = ROOT / "data" / "processed" / "generate"
 HOLDOUT_CKPT = ROOT / "data" / "processed" / "holdout"
 HOLDOUT_STATE = HOLDOUT_CKPT / "holdout_state.json"
 SPECS = {
@@ -166,11 +168,17 @@ def explore(spec_keys, sy, ey, batch):
         combined[spec_id] = walk_forward(windows, config)
 
     trials = [c["result"] for c in combined.values()]
+    # Pool every prior generated batch's specs so the correction counts all tests run.
+    prior = prior_trial_sharpes(GENERATE_DIR, batch, set(combined.keys()))
+    n_counted = len(trials) + int(prior.size)
     alpha = 0.05
-    print(f"\n=== SURVIVAL FILTER ({sy}-{ey}, {len(trials)} trials counted) ===")
+    print(
+        f"\n=== SURVIVAL FILTER ({sy}-{ey}, {n_counted} trials counted: "
+        f"{len(trials)} here + {int(prior.size)} prior batches) ==="
+    )
     print(f"  {'spec':<34}{'cohorts':>8}{'mean sec-rel':>14}{'Sharpe':>9}{'DSR':>8}  verdict")
     for spec_id, c in combined.items():
-        dsr = deflated_sharpe(c["result"], trials, config)
+        dsr = deflated_sharpe(c["result"], trials, config, prior_trial_sharpes=prior)
         verdict = "PASS" if dsr > 1 - alpha else "fail"
         print(
             f"  {spec_id:<34}{c['n_cohorts']:>8}{c['mean_return']:>+14.4%}"
