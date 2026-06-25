@@ -26,10 +26,11 @@ forward-looking judgment.
   Proposers live in `_PROPOSERS: dict[str, Callable[[str, set[str]], list[HypothesisSpec]]]`
   keyed by family name; `prompt_context["available_features"]` carries the resolvable
   feature catalog. Add a new family `"llm"` here.
-- Runners call it already: `scripts/06_generate_and_screen.py` (serial) and
-  `scripts/07_run_chunked.py` (chunked + multiprocess, preferred). Both do
+- The runner calls it already: `scripts/06_generate_and_screen.py`. It does
   `generate({"available_features": provider.available_features()}, n=limit, generation_batch=batch, families=families)`
-  and support `--families`. Checkpoints: `data/processed/generate/<batch>/<spec_id>/year=YYYY.pkl`.
+  and supports `--families` and `--shard i/n` (run disjoint shards in parallel
+  terminals, then re-run with no `--shard` to assemble the full table).
+  Checkpoints: `data/processed/generate/<batch>/<spec_id>/year=YYYY.pkl`.
 
 ## HypothesisSpec schema the LLM must produce (one JSON object per spec)
 Required: `id` (unique stable string), `description` (string), `source` (set to
@@ -116,8 +117,9 @@ export ANTHROPIC_API_KEY=<ANTHROPIC_API_KEY>
 # 3) checks
 ruff format . && ruff check . && pytest -q
 
-# 4) generate a small LLM batch and run it through the judge (chunked/parallel)
-python scripts/07_run_chunked.py llm_batch_1 2004 2019 --families llm --limit 12
+# 4) generate a small LLM batch and run it through the judge
+#    (shard across terminals with --shard i/n, then assemble with no --shard)
+python scripts/06_generate_and_screen.py llm_batch_1 2004 2019 --families llm --limit 12
 ```
 The locked holdout is 2020–2023 and must never be loaded by exploration runs.
 
